@@ -15,6 +15,7 @@ import Syntax.Absyn qualified as Absyn
 import Syntax.Interner qualified as Interner
 import Syntax.Lexer qualified as Lexer
 import Syntax.Parser.Session
+import Data.Functor (($>))
 
 parse :: String -> [Lexer.Token] -> Either [SyntaxError] Absyn.Program
 parse filename tokens = Bifunctor.first (\_ -> syntaxErrors session') parseRes
@@ -87,7 +88,7 @@ parseProgram = parseDeclarations []
       isToken <- match' t
       if isJust isToken
         then do
-          right <- next `expect` ("Expected expression after" ++ name)
+          right <- next `expect` ("expected expression after " ++ name)
           go (cons left right) options next
         else go left tt next
 
