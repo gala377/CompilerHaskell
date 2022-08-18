@@ -16,15 +16,6 @@ import Syntax.Interner qualified as Interner
 import Syntax.Lexer qualified as Lexer
 import Syntax.Parser.Session
 
--- this is just ">>=" at this point
--- passResultOr ::
---   Either EarlyReturn a ->
---   (a -> ParseRes b) ->
---   ParseRes b
--- passResultOr NotThisFn _ = return NotThisFn
--- passResultOr ParsedWithError _ = return ParsedWithError
--- passResultOr (Ok a) f = f a
-
 parse :: String -> [Lexer.Token] -> Either [SyntaxError] Absyn.Program
 parse filename tokens = Bifunctor.first (\_ -> syntaxErrors session') parseRes
  where
@@ -52,32 +43,25 @@ parseProgram = parseDeclarations []
 
   parseVarDecl :: ParseRes Absyn.Decl
   parseVarDecl = do
-    currT <- currToken'
-    if currT == Lexer.Var
-      then do
-        eat'
-        id <- expect parseIdentifier "expected a name after a var keyword"
-        equalSign <- match' Lexer.Assignment
-        if isJust equalSign
-          then do
-            init <- expect parseExpr "expected init expression"
-            return $
-              Absyn.VariableDecl
-                { name = id
-                , varType = Nothing
-                , initExpr = init
-                }
-          else do
-            addError' $ SyntaxError "Expected an = sign after a variable name"
-            throwError ParsedWithError
-      else throwError NotThisFn
+    check Lexer.Var
+    id <- parseIdentifier `expect` "expected a name after a var keyword"
+    Lexer.Assignment `matchExpect` "Expected an = sign after a variable name"
+    init <- parseExpr `expect` "expected init expression"
+    return $
+      Absyn.VariableDecl
+        { name = id
+        , varType = Nothing
+        , initExpr = init
+        }
 
   parseExpr :: ParseRes Absyn.Expr
   parseExpr = parseAddition
 
   parseAddition =
     parseBinaryExpr
-      [(Lexer.Plus, "+", Absyn.Add), (Lexer.Minus, "-", Absyn.Sub)]
+      [ (Lexer.Plus, "+", Absyn.Add)
+      , (Lexer.Minus, "-", Absyn.Sub)
+      ]
       parseMultiplication
 
   parseMultiplication =
@@ -103,7 +87,7 @@ parseProgram = parseDeclarations []
       isToken <- match' t
       if isJust isToken
         then do
-          right <- expect next $ "Expected expression after" ++ name
+          right <- next `expect` ("Expected expression after" ++ name)
           go (cons left right) options next
         else go left tt next
 
@@ -113,7 +97,7 @@ parseProgram = parseDeclarations []
     case t of
       Lexer.Minus -> do
         eat'
-        e <- expect parseUnaryExpr "Expected expression after unary -"
+        e <- parseUnaryExpr `expect` "Expected expression after unary -"
         return $ Absyn.Negate e
       _ -> parsePrimaryExpr
 
@@ -136,13 +120,9 @@ parseProgram = parseDeclarations []
     parsePrimaryExpr' Lexer.Nil = eat' >> return Absyn.Nil
     parsePrimaryExpr' Lexer.LParen = do
       eat'
-      expr <- expect parseExpr "expected expression inside parenthesis"
-      matched <- match' Lexer.RParen
-      if isJust matched
-        then return expr
-        else do
-          addError' $ SyntaxError "Unclosed parenthesis"
-          throwError ParsedWithError
+      expr <- parseExpr `expect` "expected expression inside parenthesis"
+      Lexer.RParen `matchExpect` "unclosed parenthesis"
+      return expr
     parsePrimaryExpr' _ = throwError NotThisFn
 
   parseIdentifier :: ParseRes Interner.Symbol
