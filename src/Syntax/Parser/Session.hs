@@ -124,7 +124,7 @@ choice action alternative = do
   res <- lift $ runExceptT action
   case res of
     Left NotThisFn -> alternative
-    other -> liftEither other 
+    other -> liftEither other
 
 addError :: SyntaxError -> ParserState ()
 addError msg = modify $ \s -> s{syntaxErrors = msg : syntaxErrors s}

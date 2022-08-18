@@ -1,12 +1,11 @@
-module Syntax.Interner
-  ( Interner,
-    newInterner,
-    intern,
-    Symbol,
-    symbolText,
-    testSymbol
-  )
-where
+module Syntax.Interner (
+  Interner,
+  newInterner,
+  intern,
+  Symbol,
+  symbolText,
+  testSymbol,
+) where
 
 import Data.Map qualified as Map
 import Data.Text qualified as T
@@ -31,25 +30,25 @@ instance Show Symbol where
   show (Symbol (_, t)) = "s(" ++ T.unpack t ++ ")"
 
 data Interner = Interner
-  { internedStrings :: Map.Map T.Text Symbol,
-    lastId :: Int
+  { internedStrings :: Map.Map T.Text Symbol
+  , lastId :: Int
   }
 
 newInterner :: Interner
 newInterner =
   Interner
-    { internedStrings = Map.empty,
-      lastId = 0
+    { internedStrings = Map.empty
+    , lastId = 0
     }
 
 intern :: Interner -> T.Text -> (Interner, Symbol)
 intern int str = case Map.lookup str $ internedStrings int of
   Just s -> (int, s)
   Nothing -> createSymbol int str
-  where
-    createSymbol int str =
-      let Interner {internedStrings, lastId} = int
-          s = Symbol (lastId, str)
-          newMap = Map.insert str s internedStrings
-          newInt = Interner {internedStrings = newMap, lastId = lastId + 1}
-       in (newInt, s)
+ where
+  createSymbol int str =
+    let Interner{internedStrings, lastId} = int
+        s = Symbol (lastId, str)
+        newMap = Map.insert str s internedStrings
+        newInt = Interner{internedStrings = newMap, lastId = lastId + 1}
+     in (newInt, s)

@@ -22,5 +22,3 @@ spec = do
             let (i', s) = Interner.intern i $ T.pack "sym1"
             let (_, s') = Interner.intern i' $ T.pack "sym2"
             s `shouldNotBe` s'
-
-

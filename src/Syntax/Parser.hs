@@ -2,7 +2,9 @@ module Syntax.Parser (
   parse,
 ) where
 
+import Control.Monad.Except (MonadError (throwError), runExceptT)
 import Control.Monad.State.Lazy
+import Data.Bifunctor qualified as Bifunctor
 import Data.List qualified as List
 import Data.Maybe (
   isJust,
@@ -13,11 +15,8 @@ import Syntax.Absyn qualified as Absyn
 import Syntax.Interner qualified as Interner
 import Syntax.Lexer qualified as Lexer
 import Syntax.Parser.Session
-import Control.Monad.Except (runExceptT, MonadError (throwError))
-import Data.Bifunctor qualified as Bifunctor
 
-
--- this is just ">>=" at this point 
+-- this is just ">>=" at this point
 -- passResultOr ::
 --   Either EarlyReturn a ->
 --   (a -> ParseRes b) ->
@@ -62,11 +61,12 @@ parseProgram = parseDeclarations []
         if isJust equalSign
           then do
             init <- expect parseExpr "expected init expression"
-            return $ Absyn.VariableDecl
-                    { name = id
-                    , varType = Nothing
-                    , initExpr = init
-                    }
+            return $
+              Absyn.VariableDecl
+                { name = id
+                , varType = Nothing
+                , initExpr = init
+                }
           else do
             addError' $ SyntaxError "Expected an = sign after a variable name"
             throwError ParsedWithError
@@ -153,4 +153,3 @@ parseProgram = parseDeclarations []
         eat'
         intern' name
       _ -> throwError NotThisFn
-

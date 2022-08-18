@@ -1,11 +1,11 @@
 module Syntax.ParserSpec (spec) where
 
+import Syntax.Absyn (testCompareDecls)
 import Syntax.Absyn qualified as Absyn
 import Syntax.Interner (testSymbol)
 import Syntax.Lexer qualified as Lexer
 import Syntax.Parser qualified as Parser
 import Test.Hspec
-import Syntax.Absyn (testCompareDecls)
 
 parse :: String -> Absyn.Program
 parse source =
@@ -20,9 +20,9 @@ spec = do
     it "parses var decl with simple init expr" $ do
       let expected =
             Absyn.VariableDecl
-              { name = testSymbol "a",
-                varType = Nothing,
-                initExpr = Absyn.ConstInt 1
+              { name = testSymbol "a"
+              , varType = Nothing
+              , initExpr = Absyn.ConstInt 1
               }
       let Absyn.Program [res] = parse "var a = 1"
       testCompareDecls res expected `shouldBe` True
