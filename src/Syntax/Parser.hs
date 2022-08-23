@@ -29,7 +29,7 @@ parseProgram = parseDeclarations []
  where
   parseDeclarations :: [Absyn.Decl] -> ParseRes Absyn.Program
   parseDeclarations decls = do
-    curr <- currToken'
+    curr <- currToken
     if curr == Lexer.EOF
       then return $ Absyn.Program $ reverse decls
       else do
@@ -85,7 +85,7 @@ parseProgram = parseDeclarations []
    where
     go left [] _ = return left
     go left ((t, name, cons) : tt) next = do
-      isToken <- match' t
+      isToken <- match t
       if isJust isToken
         then do
           right <- next `expect` ("expected expression after " ++ name)
@@ -94,33 +94,33 @@ parseProgram = parseDeclarations []
 
   parseUnaryExpr :: ParseRes Absyn.Expr
   parseUnaryExpr = do
-    t <- currToken'
+    t <- currToken
     case t of
       Lexer.Minus -> do
-        eat'
+        eat
         e <- parseUnaryExpr `expect` "Expected expression after unary -"
         return $ Absyn.Negate e
       _ -> parsePrimaryExpr
 
   parsePrimaryExpr :: ParseRes Absyn.Expr
-  parsePrimaryExpr = currToken' >>= parsePrimaryExpr'
+  parsePrimaryExpr = currToken >>= parsePrimaryExpr'
    where
     parsePrimaryExpr' :: Lexer.Token -> ParseRes Absyn.Expr
     parsePrimaryExpr' (Lexer.IntLit val) =
-      eat' >> return (Absyn.ConstInt val)
+      eat >> return (Absyn.ConstInt val)
     parsePrimaryExpr' (Lexer.StringLit val) =
-      eat' >> return (Absyn.ConstStr val)
+      eat >> return (Absyn.ConstStr val)
     parsePrimaryExpr' (Lexer.FloatLit val) =
-      eat' >> return (Absyn.ConstDouble val)
+      eat >> return (Absyn.ConstDouble val)
     parsePrimaryExpr' (Lexer.BoolLit val) =
-      eat' >> return (Absyn.ConstBool val)
+      eat >> return (Absyn.ConstBool val)
     parsePrimaryExpr' (Lexer.Identifier val) = do
-      eat'
-      sym <- intern' val
+      eat
+      sym <- intern val
       return $ Absyn.Identifier sym
-    parsePrimaryExpr' Lexer.Nil = eat' >> return Absyn.Nil
+    parsePrimaryExpr' Lexer.Nil = eat >> return Absyn.Nil
     parsePrimaryExpr' Lexer.LParen = do
-      eat'
+      eat
       expr <- parseExpr `expect` "expected expression inside parenthesis"
       Lexer.RParen `matchExpect` "unclosed parenthesis"
       return expr
@@ -128,9 +128,9 @@ parseProgram = parseDeclarations []
 
   parseIdentifier :: ParseRes Interner.Symbol
   parseIdentifier = do
-    curr <- currToken'
+    curr <- currToken
     case curr of
       Lexer.Identifier name -> do
-        eat'
-        intern' name
+        eat
+        intern name
       _ -> throwError NotThisFn

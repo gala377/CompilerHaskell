@@ -1,7 +1,7 @@
 {-# OPTIONS_GHC -fno-warn-unused-binds -fno-warn-missing-signatures #-}
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE MagicHash #-}
-{-# LINE 1 "grammar\Lexer.x" #-}
+{-# LINE 1 "grammar/Lexer.x" #-}
 module Syntax.Lexer
     ( toTokens
     , Token ( .. ) 
@@ -698,7 +698,7 @@ alex_actions = array (0 :: Int, 96)
   , (0,alex_action_23)
   ]
 
-{-# LINE 66 "grammar\Lexer.x" #-}
+{-# LINE 66 "grammar/Lexer.x" #-}
 data Token
     {- literals -}
     = IntLit Int
