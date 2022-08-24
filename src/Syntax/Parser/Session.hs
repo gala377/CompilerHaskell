@@ -18,6 +18,7 @@ module Syntax.Parser.Session
     check,
     expect,
     choice,
+    optional,
   )
 where
 
@@ -171,3 +172,10 @@ choice action alternative = do
 -- Add new error.
 addError :: PState m => SyntaxError -> m ()
 addError msg = modify $ \s -> s {syntaxErrors = msg : syntaxErrors s}
+
+
+optional :: (PRes m) => m a -> m (Maybe a)
+optional f = do
+  (Just <$> f) `catchError` \case
+    NotThisFn -> return Nothing
+    e -> throwError e

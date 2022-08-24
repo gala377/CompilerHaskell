@@ -4,7 +4,7 @@ module Syntax.Parser
   )
 where
 
-import Control.Monad.Except (MonadError (throwError), runExceptT)
+import Control.Monad.Except (MonadError (throwError, catchError), runExceptT)
 import Control.Monad.State.Lazy
 import Data.Bifunctor qualified as Bifunctor
 import Data.Functor (($>))
@@ -18,6 +18,7 @@ import Syntax.Absyn qualified as Absyn
 import Syntax.Interner qualified as Interner
 import Syntax.Lexer qualified as Lexer
 import Syntax.Parser.Session
+import Debug.Trace (trace)
 
 parse :: String -> [Lexer.Token] -> Either [SyntaxError] Absyn.Program
 parse filename tokens = Bifunctor.first (\_ -> syntaxErrors session') parseRes
@@ -42,38 +43,96 @@ parseDeclarations decls = do
     parseDecl = parseFunDecl `choice` parseVarDecl `choice` parseTypeDecl
 
     parseTypeDecl = throwError NotThisFn
-    parseFunDecl = throwError NotThisFn
+
+    parseFunDecl :: ParseRes Absyn.Decl
+    parseFunDecl = do
+        check Lexer.Fun
+        name <- parseIdentifier `expect` "expected function name"
+        Lexer.LParen `matchOrErr` "expected functions arg list to be inside parenthesis"
+        args <- parseTypedNameList [] `expect` "expected argument list"
+        Lexer.RParen `matchOrErr` "expected functions arg list to be inside parenthesis"
+        colon <- match Lexer.Colon
+        typ <- if isJust colon
+          then Just <$> (parseType `expect` "expected function return type")
+          else return Nothing
+        Lexer.Assignment `matchOrErr` "expected = sign after functions declaration"
+        body <- parseExpr `expect` "expected functions body"
+        return $ Absyn.FunctionDecl name args typ body
+          
+    parseTypedName :: ParseRes Absyn.TypedName
+    parseTypedName = do
+      name <- parseIdentifier
+      Lexer.Colon `matchOrErr` "expected a colon"
+      typ <- parseType `expect` "expected a type after a colon"
+      return $ Absyn.TypedName name typ
+
+    parseTypedNameList :: [Absyn.TypedName] -> ParseRes [Absyn.TypedName]
+    parseTypedNameList acc = do
+      name <- (Just <$> parseTypedName) `catchError` \case
+        NotThisFn -> return Nothing
+        e -> throwError e
+      case name of
+        Nothing -> return $ reverse acc
+        Just name' -> do
+          comma <- match Lexer.Comma
+          if isJust comma 
+          then parseTypedNameList (name' : acc)
+          else return $ reverse (name' : acc)
+
 
     parseVarDecl :: ParseRes Absyn.Decl
     parseVarDecl = do
       check Lexer.Var
       id <- parseIdentifier `expect` "expected a name after a var keyword"
+      colon <- match Lexer.Colon
+      typ <- if isJust colon
+        then Just <$> (parseType `expect` "expected variable type")
+        else return Nothing
       Lexer.Assignment `matchExpect` "Expected an = sign after a variable name"
       init <- parseExpr `expect` "expected init expression"
       return $
         Absyn.VariableDecl
           { name = id,
-            varType = Nothing,
+            varType = typ,
             initExpr = init
           }
 
+    parseType :: ParseRes Absyn.Type
+    parseType = currToken >>= \case
+      Lexer.LBracket -> parseRecordType
+      Lexer.Identifier _ -> parseTypeName
+      Lexer.Array -> parseArrType
+      _ -> throwError NotThisFn
+      where
+        parseArrType = undefined
+        parseTypeName = undefined
+        parseRecordType = undefined
+
 parseExpr :: ParseRes Absyn.Expr
-parseExpr = parseAddition
+parseExpr = parseSequence
   where
     parseSequence :: ParseRes Absyn.Expr
     parseSequence = do
-      left <- parseExpr'
+      left <- parseAssignment
       go left
       where
         go left = do
           s <- match Lexer.Semicolon
           if isJust s
             then do
-              right <- parseExpr' `expect` "Expected expression after ;"
+              right <- parseAssignment `expect` "Expected expression after ;"
               go $ Absyn.Sequence left right
             else return left
 
-    parseExpr' = parseStmt `choice` parseAssignment
+    parseAssignment :: ParseRes Absyn.Expr
+    parseAssignment = do
+      left <- parseStmt
+      assign <- match Lexer.Assignment
+      if isJust assign
+        then do
+          right <- parseStmt `expect` "Expected expression after assignment"
+          return $ Absyn.Assignment left right
+        else return left
 
     parseStmt :: ParseRes Absyn.Expr
     parseStmt = go parseFns
@@ -85,7 +144,12 @@ parseExpr = parseAddition
             (Lexer.For, parseFor),
             (Lexer.Let, parseLet)
           ]
-        go [] = throwError NotThisFn
+        go [] = do
+          res <- parseEq
+          currToken >>= \case
+            Lexer.Of -> parseArrLit res
+            Lexer.LBracket -> parseRecordLit res
+            _ -> return res
         go ((tok, f) : fs) =
           match tok >>= \case
             Just _ -> f
@@ -133,16 +197,6 @@ parseExpr = parseAddition
             forLimit = limit,
             forBody = body
           }
-
-    parseAssignment :: ParseRes Absyn.Expr
-    parseAssignment = do
-      left <- parseEq
-      assign <- match Lexer.Assignment
-      if isJust assign
-        then do
-          right <- parseEq `expect` "Expected expression after assignment"
-          return $ Absyn.Assignment left right
-        else return left
 
     parseEq =
       parseBinaryExpr
@@ -214,10 +268,11 @@ parseExpr = parseAddition
           eat
           e <- parseUnaryExpr `expect` "Expected expression after unary -"
           return $ Absyn.Negate e
-        _ -> parseAccessOrIndex
+        _ -> parsePostfixOperators
 
-    parseAccessOrIndex :: ParseRes Absyn.Expr
-    parseAccessOrIndex = do
+    -- todo: add function call also
+    parsePostfixOperators :: ParseRes Absyn.Expr
+    parsePostfixOperators = do
       left <- parsePrimaryExpr
       goAccess left
       where
@@ -262,6 +317,44 @@ parseExpr = parseAddition
           Lexer.RParen `matchOrErr` "unclosed parenthesis"
           return expr
         parsePrimaryExpr' _ = throwError NotThisFn
+
+    parseRecordLit :: Absyn.Expr -> ParseRes Absyn.Expr
+    parseRecordLit (Absyn.Identifier typeid) = do
+        eat
+        initList <- parseInitList [] `expect` "expected init list for record literal"
+        Lexer.RBracket `matchOrErr` "expected closing bracket on record literal"  
+        return $ Absyn.RecordLit typeid initList
+      where
+        parseInitList :: [(Interner.Symbol, Absyn.Expr)] -> ParseRes [(Interner.Symbol, Absyn.Expr)]
+        parseInitList acc = do
+          name <- (Just <$> parseFieldInit) `catchError` \case
+            NotThisFn -> return Nothing
+            e -> throwError e
+          case name of
+            Nothing -> return $ reverse acc
+            Just name' -> do
+              comma <- match Lexer.Comma
+              if isJust comma
+              then parseInitList (name' : acc)
+              else return $ reverse (name' : acc)
+        parseFieldInit :: ParseRes (Interner.Symbol, Absyn.Expr)
+        parseFieldInit = do
+          name <- parseIdentifier 
+          Lexer.Assignment `matchOrErr` "expected = in a record literal"
+          init <- parseExpr `expect` "expected record field init expr"
+          return (name, init)
+    parseRecordLit _ = do
+      addError $ SyntaxError "wrong record literal"
+      throwError ParsedWithError
+
+    parseArrLit :: Absyn.Expr -> ParseRes Absyn.Expr
+    parseArrLit (Absyn.Indexing (Absyn.Identifier name) limit) = do
+      eat
+      init <- parseAssignment `expect` "expected init expression in array literal"
+      return $ Absyn.ArrayLit name limit init
+    parseArrLit _ = do
+      addError $ SyntaxError "wrong array literal"
+      throwError ParsedWithError
 
 parseIdentifier :: ParseRes Interner.Symbol
 parseIdentifier = do

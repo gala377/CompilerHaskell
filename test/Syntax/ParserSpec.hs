@@ -109,6 +109,19 @@ spec = do
                   (Absyn.ConstInt 100)
       let res = parseExpr "--a[b + 100].c.d[100]"
       res `exprShouldBe` expected
+    it "parses array literal" $ do
+      let expected = Absyn.ArrayLit (testSymbol "a") (Absyn.ConstInt 100) (Absyn.ConstInt 200)
+      let res = parseExpr "a[100] of 200"
+      res `exprShouldBe` expected
+    it "parses complex record literal" $ do
+      let expected = 
+              Absyn.RecordLit 
+                (testSymbol "a")
+                [ (testSymbol "b", Absyn.ConstInt 100)
+                , (testSymbol "c", Absyn.ArrayLit (testSymbol "d") (Absyn.ConstInt 100) (Absyn.ConstInt 200))
+                ]
+      let res = parseExpr "a { b = 100, c = d[100] of 200 }"
+      res `exprShouldBe` expected
   describe "testCompareExpr" $ do
     it "compares addition correctly" $ do
       let e1 = Absyn.Add (Absyn.ConstInt 1) (Absyn.ConstInt 2)

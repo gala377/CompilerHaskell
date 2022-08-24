@@ -37,8 +37,6 @@ tokens :-
     "then"  { \_ -> Then }
     "to"    { \_ -> To }
     "continue" {\_ -> Continue }
-    _+|_*[$alpha][_$alpha$digit]*    { \s -> Identifier $ Text.pack s }
-    \"(\\.|[^\"\\])*\" { \s -> StringLit $ Text.pack $ tail $ init s  }
     "="     { \_ -> Assignment }
     "/"     { \_ -> Divide }
     "("     { \_ -> LParen }
@@ -63,6 +61,8 @@ tokens :-
     "."     { \_ -> Dot }
     ";"     { \_ -> Semicolon }
     ":"     { \_ -> Colon }
+    _+|_*[$alpha][_$alpha$digit]*    { \s -> Identifier $ Text.pack s }
+    \"(\\.|[^\"\\])*\" { \s -> StringLit $ Text.pack $ tail $ init s  }
 
 {
 data Token
