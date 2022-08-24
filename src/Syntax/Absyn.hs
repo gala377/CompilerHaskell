@@ -30,19 +30,19 @@ data Decl
       , initExpr :: Expr
       }
   | TypeDecl Symbol Type
-  deriving (Show)
+  deriving (Show, Eq)
 
 data Type
   = TypeName Symbol
   | Array Type
   | Record [TypedName]
-  deriving (Show)
+  deriving (Show, Eq)
 
 data TypedName = TypedName
   { name :: Symbol
   , typ :: Type
   }
-  deriving (Show)
+  deriving (Show, Eq)
 
 data Expr
   = ConstInt Int
@@ -51,6 +51,16 @@ data Expr
   | ConstBool Bool
   | Identifier Symbol
   | Nil
+  | And Expr Expr
+  | Or Expr Expr
+  | Equal Expr Expr
+  | NotEqual Expr Expr
+  | Gt Expr Expr
+  | Lt Expr Expr
+  | GtEq Expr Expr
+  | LtEq Expr Expr
+  | BoolNegate Expr
+  | Assignment Expr Expr
   | Add Expr Expr
   | Sub Expr Expr
   | Mult Expr Expr
@@ -59,7 +69,12 @@ data Expr
   | Indexing Expr Expr
   | Access Expr Symbol
   | FunctionCall Expr [Expr]
-  | Sequence [Expr]
+  | Sequence Expr Expr
+  {- If Cond Then Else -}
+  | If Expr Expr Expr
+  | While Expr Expr
+  | For { forVar :: Symbol, forVarInit :: Expr, forLimit :: Expr, forBody :: Expr }
+  | Let [Decl] Expr
   | Break
   | Continue
   | ErrorExpr
@@ -151,8 +166,8 @@ testCompareExpr (Negate e1) (Negate e2) =
   testCompareExpr e1 e2
 testCompareExpr (Access e1 s1) (Access e2 s2) =
   testCompareSymbols s1 s2 && testCompareExpr e1 e2
-testCompareExpr (Sequence s1) (Sequence s2) =
-  length s1 == length s2 && all (uncurry testCompareExpr) (zip s1 s2)
+testCompareExpr (Sequence l1 r1) (Sequence l2 r2) =
+  testCompareExpr l1 l2 && testCompareExpr r1 r2 
 testCompareExpr (FunctionCall e1 p1) (FunctionCall e2 p2) =
   testCompareExpr e1 e2 && length p1 == length p2
     && all (uncurry testCompareExpr) (zip p1 p2)

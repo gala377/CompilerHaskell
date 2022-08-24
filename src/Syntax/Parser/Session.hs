@@ -11,6 +11,7 @@ module Syntax.Parser.Session
     match,
     matchExpect,
     matchOrErr,
+    ifMatch,
     intern,
     EarlyReturn (..),
     ParseRes,
@@ -139,6 +140,13 @@ matchOrErr t msg = (check t $> ()) `catchError` \case
     addError $ SyntaxError msg
     return ()
   e -> throwError e
+
+ifMatch :: (PRes m, PState m) => Lexer.Token -> m a -> m a -> m a
+ifMatch tok iffalse iftrue = do
+  t <- match tok
+  case t of
+    Nothing -> iffalse
+    Just _ -> iftrue
 
 -- Check if the current token is equal to the given one.
 -- If it is then eat it and succeed.

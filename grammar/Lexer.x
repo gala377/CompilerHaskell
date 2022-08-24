@@ -19,6 +19,7 @@ tokens :-
     $digit+\.$digit* { \s -> FloatLit (read s) }
     "true"  { \_ -> BoolLit True }
     "false" { \_ -> BoolLit False }
+    "let"   { \_ -> Let }
     "if"    { \_ -> If }
     "else"  { \_ -> Else }
     "while" { \_ -> While }
@@ -74,6 +75,7 @@ data Token
     | Nil
     {- keywords -}
     | If
+    | Let
     | Else
     | While
     | For

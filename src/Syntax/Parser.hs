@@ -27,17 +27,17 @@ parse filename tokens = Bifunctor.first (\_ -> syntaxErrors session') parseRes
     (parseRes, session') = runState action session
 
 parseProgram :: ParseRes Absyn.Program
-parseProgram = parseDeclarations []
-  where
-    parseDeclarations :: [Absyn.Decl] -> ParseRes Absyn.Program
-    parseDeclarations decls = do
-      curr <- currToken
-      if curr == Lexer.EOF
-        then return $ Absyn.Program $ reverse decls
-        else do
-          decl <- expect parseDecl "expected declaration on the top level"
-          parseDeclarations (decl : decls)
+parseProgram = Absyn.Program <$> parseDeclarations []
 
+parseDeclarations :: [Absyn.Decl] -> ParseRes [Absyn.Decl]
+parseDeclarations decls = do
+  curr <- currToken
+  if curr == Lexer.EOF
+    then return $ reverse decls
+    else do
+      decl <- expect parseDecl "expected declaration on the top level"
+      parseDeclarations (decl : decls)
+  where
     parseDecl :: ParseRes Absyn.Decl
     parseDecl = parseFunDecl `choice` parseVarDecl `choice` parseTypeDecl
 
@@ -60,6 +60,118 @@ parseProgram = parseDeclarations []
 parseExpr :: ParseRes Absyn.Expr
 parseExpr = parseAddition
   where
+    parseSequence :: ParseRes Absyn.Expr
+    parseSequence = do
+      left <- parseExpr'
+      go left
+      where
+        go left = do
+          s <- match Lexer.Semicolon
+          if isJust s
+            then do
+              right <- parseExpr' `expect` "Expected expression after ;"
+              go $ Absyn.Sequence left right
+            else return left
+
+    parseExpr' = parseStmt `choice` parseAssignment
+
+    parseStmt :: ParseRes Absyn.Expr
+    parseStmt = go parseFns
+      where
+        parseFns =
+          [ (Lexer.If, parseIf),
+            (Lexer.While, parseWhile),
+            (Lexer.Break, return Absyn.Break),
+            (Lexer.For, parseFor),
+            (Lexer.Let, parseLet)
+          ]
+        go [] = throwError NotThisFn
+        go ((tok, f) : fs) =
+          match tok >>= \case
+            Just _ -> f
+            Nothing -> go fs
+
+    parseLet :: ParseRes Absyn.Expr
+    parseLet = do
+      decls <- parseDeclarations [] `expect` "expected declarations in let"
+      Lexer.In `matchOrErr` "expected 'in' keyword"
+      body <- parseExpr `expect` "expected body for let"
+      Lexer.End `matchOrErr` "expected 'end' keyword"
+      return $ Absyn.Let decls body
+
+    parseIf :: ParseRes Absyn.Expr
+    parseIf = do
+      cond <- parseAddition `expect` "expected if condition"
+      Lexer.Then `matchOrErr` "expected 'then' keyword after condition"
+      body <- parseExpr `expect` "expected if's body"
+      match Lexer.Else >>= \case
+        Nothing -> return $ Absyn.If cond body Absyn.Nil
+        Just _ -> do
+          elseBody <- parseSequence `expect` "expected else's body"
+          return $ Absyn.If cond body elseBody
+
+    parseWhile :: ParseRes Absyn.Expr
+    parseWhile = do
+      cond <- parseAddition `expect` "expected while's condition"
+      Lexer.Then `matchOrErr` "expected 'then' keyword after condition"
+      body <- parseExpr `expect` "expected while's body"
+      return $ Absyn.While cond body
+
+    parseFor :: ParseRes Absyn.Expr
+    parseFor = do
+      id <- parseIdentifier `expect` "expected var declaration in for"
+      Lexer.Assignment `matchOrErr` "expected = in for"
+      init <- parseExpr `expect` "expected init expression for for variable"
+      Lexer.To `matchOrErr` "expdcted 'to' keyword"
+      limit <- parseExpr `expect` "expected expression as for limit"
+      Lexer.Do `matchOrErr` "expected a 'do' keyword"
+      body <- parseExpr `expect` "expected for's body"
+      return $
+        Absyn.For
+          { forVar = id,
+            forVarInit = init,
+            forLimit = limit,
+            forBody = body
+          }
+
+    parseAssignment :: ParseRes Absyn.Expr
+    parseAssignment = do
+      left <- parseEq
+      assign <- match Lexer.Assignment
+      if isJust assign
+        then do
+          right <- parseEq `expect` "Expected expression after assignment"
+          return $ Absyn.Assignment left right
+        else return left
+
+    parseEq =
+      parseBinaryExpr
+        [ (Lexer.Equal, "==", Absyn.Equal),
+          (Lexer.NotEqual, "!=", Absyn.NotEqual),
+          (Lexer.GreaterThan, ">", Absyn.Gt),
+          (Lexer.LessThan, "<", Absyn.Lt),
+          (Lexer.GreaterOrEq, ">=", Absyn.GtEq),
+          (Lexer.LessOrEq, "<=", Absyn.LtEq)
+        ]
+        parseAnd
+
+    parseAnd =
+      parseBinaryExpr
+        [(Lexer.And, "&&", Absyn.And)]
+        parseOr
+
+    parseOr = parseBinaryExpr [(Lexer.Or, "||", Absyn.Or)] parseBoolNeg
+
+    parseBoolNeg :: ParseRes Absyn.Expr
+    parseBoolNeg = do
+      t <- currToken
+      case t of
+        Lexer.Negation -> do
+          eat
+          e <- parseAddition `expect` "Expected expression after negation"
+          return $ Absyn.BoolNegate e
+        _ -> parseAddition
+
     parseAddition =
       parseBinaryExpr
         [ (Lexer.Plus, "+", Absyn.Add),
