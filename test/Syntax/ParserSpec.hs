@@ -1,11 +1,19 @@
 module Syntax.ParserSpec (spec) where
 
-import Syntax.Absyn (testCompareDecls)
+import Control.Monad.State.Lazy (State, runState)
+import Control.Monad.Except (runExceptT)
+
+import Text.Pretty.Simple (pShow)
+
+import Syntax.Absyn (testCompareDecls, testCompareExpr)
 import Syntax.Absyn qualified as Absyn
 import Syntax.Interner (testSymbol)
 import Syntax.Lexer qualified as Lexer
 import Syntax.Parser qualified as Parser
+import Syntax.Parser.Session qualified as Session
 import Test.Hspec
+import Test.HUnit (assertBool)
+import Data.Text.Lazy qualified as T
 
 parse :: String -> Absyn.Program
 parse source =
@@ -13,6 +21,26 @@ parse source =
    in case Parser.parse "test" tokens of
         Left e -> error ("syntax errors " ++ show e)
         Right r -> r
+parseExpr :: String -> Absyn.Expr
+parseExpr source = case parseRes of
+    Right r -> r
+    Left _ -> error ("syntax errors " ++ show (Session.syntaxErrors session'))
+  where
+    tokens = Lexer.toTokens source
+    session = Session.mkSession "test" tokens
+    action = runExceptT Parser.parseExpr
+    (parseRes, session') = runState action session
+
+pretty :: (Show a) => a -> String
+pretty = T.unpack . pShow
+
+astShouldBe :: (Show a) => (a -> a -> Bool) -> a -> a -> Expectation
+astShouldBe p got want = assertBool msg (p want got)
+  where
+    msg = "Expected:\n\n" ++ pretty want ++ "\n\nGot:\n\n" ++ pretty got
+
+exprShouldBe = astShouldBe testCompareExpr
+declShouldBe = astShouldBe testCompareDecls
 
 spec :: Spec
 spec = do
@@ -25,7 +53,62 @@ spec = do
               , initExpr = Absyn.ConstInt 1
               }
       let Absyn.Program [res] = parse "var a = 1"
-      testCompareDecls res expected `shouldBe` True
+      res `declShouldBe` expected
+  describe "parseExpr" $ do
+    it "parses simple access" $ do
+      let expected = Absyn.Access (Absyn.Identifier $ testSymbol "a") (testSymbol "b")
+      let res = parseExpr "a.b"
+      res `exprShouldBe` expected
+    it "parses access chain" $ do
+      let expected =
+            Absyn.Access
+              (Absyn.Access 
+                (Absyn.Access 
+                    (Absyn.Identifier $ testSymbol "a")
+                    (testSymbol "b"))
+                (testSymbol "c"))
+              (testSymbol "d")
+      let res = parseExpr "a.b.c.d"
+      res `exprShouldBe` expected
+    it "parses indexing" $ do
+      let expected =
+            Absyn.Indexing
+              (Absyn.Identifier (testSymbol "a"))
+              (Absyn.ConstInt 100)
+      let res = parseExpr "a[100]"
+      res `shouldBe` expected
+    it "parses access chain with indexing" $ do
+      let expected =
+            Absyn.Indexing
+              (Absyn.Access
+                (Absyn.Access 
+                  (Absyn.Indexing 
+                      (Absyn.Identifier $ testSymbol "a")
+                      (Absyn.Add 
+                        (Absyn.Identifier $ testSymbol "b")
+                        (Absyn.ConstInt 100)))
+                  (testSymbol "c"))
+                (testSymbol "d"))
+              (Absyn.ConstInt 100)
+      let res = parseExpr "a[b + 100].c.d[100]"
+      res `exprShouldBe` expected
+    it "parses access chain with indexing and unary operators" $ do
+      let expected =
+            Absyn.Negate $
+              Absyn.Negate $
+                Absyn.Indexing
+                  (Absyn.Access
+                    (Absyn.Access 
+                      (Absyn.Indexing 
+                          (Absyn.Identifier $ testSymbol "a")
+                          (Absyn.Add 
+                            (Absyn.Identifier $ testSymbol "b")
+                            (Absyn.ConstInt 100)))
+                      (testSymbol "c"))
+                    (testSymbol "d"))
+                  (Absyn.ConstInt 100)
+      let res = parseExpr "--a[b + 100].c.d[100]"
+      res `exprShouldBe` expected
   describe "testCompareExpr" $ do
     it "compares addition correctly" $ do
       let e1 = Absyn.Add (Absyn.ConstInt 1) (Absyn.ConstInt 2)

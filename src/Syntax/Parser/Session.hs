@@ -10,6 +10,7 @@ module Syntax.Parser.Session
     eat,
     match,
     matchExpect,
+    matchOrErr,
     intern,
     EarlyReturn (..),
     ParseRes,
@@ -35,6 +36,7 @@ import Data.Maybe qualified as Maybe
 import Data.Text qualified as T
 import Syntax.Interner qualified as Interner
 import Syntax.Lexer qualified as Lexer
+import Data.Functor (($>))
 
 newtype SyntaxError = SyntaxError {unSyntaxError :: String} deriving (Show)
 
@@ -127,6 +129,16 @@ expect action err =
 -- If not add error with the given message and exit early.
 matchExpect :: (PRes m, PState m) => Lexer.Token -> String -> m Lexer.Token
 matchExpect t msg = check t `expect` msg
+
+-- Expect the token to mach.
+-- If not add error with the given message.
+-- In contrats to the `matchExpect` this function does not return early.
+matchOrErr :: (PRes m, PState m) => Lexer.Token -> String -> m ()
+matchOrErr t msg = (check t $> ()) `catchError` \case
+  NotThisFn -> do
+    addError $ SyntaxError msg
+    return ()
+  e -> throwError e
 
 -- Check if the current token is equal to the given one.
 -- If it is then eat it and succeed.
