@@ -135,6 +135,16 @@ spec = do
                 ]
       let res = parseExpr "a { b = 100, c = d[100] of 200 }"
       res `exprShouldBe` expected
+    it "parses a function call" $ do
+      let expected = 
+              Absyn.FunctionCall
+                (Absyn.Access (Absyn.Identifier $ testSymbol "a") (testSymbol "b"))
+                [ Absyn.Add (Absyn.ConstInt 1) (Absyn.ConstInt 2)
+                , Absyn.ConstInt 3
+                ]
+      let res = parseExpr "a.b(1+2, 3)"
+      res `exprShouldBe` expected
+
   describe "testCompareExpr" $ do
     it "compares addition correctly" $ do
       let e1 = Absyn.Add (Absyn.ConstInt 1) (Absyn.ConstInt 2)
