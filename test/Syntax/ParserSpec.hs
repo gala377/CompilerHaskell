@@ -54,6 +54,19 @@ spec = do
               }
       let Absyn.Program [res] = parse "var a = 1"
       res `declShouldBe` expected
+    it "parses a function declaration" $ do
+      let expected =
+            Absyn.FunctionDecl
+              (testSymbol "foo")
+              [Absyn.TypedName (testSymbol "arg") $ Absyn.TypeName $ testSymbol "argt"]
+              (Just $ Absyn.TypeName  $ testSymbol "ret")
+              (Absyn.ConstInt 10)
+      let Absyn.Program [res] = parse "function foo(arg: argt): ret = 10"
+      res `declShouldBe` expected
+    it "parser a type decl" $ do
+      let expected = Absyn.TypeDecl (testSymbol "foo") $ Absyn.Array $ Absyn.TypeName $ testSymbol "int"
+      let Absyn.Program [res] = parse "type foo = array of int"
+      res `declShouldBe` expected
   describe "parseExpr" $ do
     it "parses simple access" $ do
       let expected = Absyn.Access (Absyn.Identifier $ testSymbol "a") (testSymbol "b")

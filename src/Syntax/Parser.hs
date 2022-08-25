@@ -42,7 +42,12 @@ parseDeclarations decls = do
     parseDecl :: ParseRes Absyn.Decl
     parseDecl = parseFunDecl `choice` parseVarDecl `choice` parseTypeDecl
 
-    parseTypeDecl = throwError NotThisFn
+    parseTypeDecl = do
+      check Lexer.Type
+      name <- parseIdentifier `expect` "expected type name"
+      Lexer.Assignment `matchOrErr` "expected an equal sign in the type declaration"
+      t <- parseType `expect` "expected a type for type declaration"
+      return $ Absyn.TypeDecl name t
 
     parseFunDecl :: ParseRes Absyn.Decl
     parseFunDecl = do
@@ -58,7 +63,7 @@ parseDeclarations decls = do
         Lexer.Assignment `matchOrErr` "expected = sign after functions declaration"
         body <- parseExpr `expect` "expected functions body"
         return $ Absyn.FunctionDecl name args typ body
-          
+
     parseTypedName :: ParseRes Absyn.TypedName
     parseTypedName = do
       name <- parseIdentifier
@@ -75,10 +80,9 @@ parseDeclarations decls = do
         Nothing -> return $ reverse acc
         Just name' -> do
           comma <- match Lexer.Comma
-          if isJust comma 
+          if isJust comma
           then parseTypedNameList (name' : acc)
           else return $ reverse (name' : acc)
-
 
     parseVarDecl :: ParseRes Absyn.Decl
     parseVarDecl = do
@@ -98,15 +102,21 @@ parseDeclarations decls = do
           }
 
     parseType :: ParseRes Absyn.Type
-    parseType = currToken >>= \case
-      Lexer.LBracket -> parseRecordType
-      Lexer.Identifier _ -> parseTypeName
-      Lexer.Array -> parseArrType
-      _ -> throwError NotThisFn
+    parseType = parseArrType `choice` parseTypeName `choice` parseRecordType
       where
-        parseArrType = undefined
-        parseTypeName = undefined
-        parseRecordType = undefined
+        parseArrType = do
+          check Lexer.Array
+          Lexer.Of `matchOrErr` "expected 'of' keyword in the array type"
+          t <- parseType `expect` "expected a type of an array"
+          return $ Absyn.Array t
+
+        parseTypeName = Absyn.TypeName <$> parseIdentifier
+        
+        parseRecordType = do
+          check Lexer.LBracket
+          fields <- parseTypedNameList [] `expect` "expected fields in the record"
+          Lexer.RBracket `matchOrErr` "expected closing } in record type"
+          return $ Absyn.Record fields
 
 parseExpr :: ParseRes Absyn.Expr
 parseExpr = parseSequence
@@ -322,7 +332,7 @@ parseExpr = parseSequence
     parseRecordLit (Absyn.Identifier typeid) = do
         eat
         initList <- parseInitList [] `expect` "expected init list for record literal"
-        Lexer.RBracket `matchOrErr` "expected closing bracket on record literal"  
+        Lexer.RBracket `matchOrErr` "expected closing bracket on record literal"
         return $ Absyn.RecordLit typeid initList
       where
         parseInitList :: [(Interner.Symbol, Absyn.Expr)] -> ParseRes [(Interner.Symbol, Absyn.Expr)]
@@ -339,7 +349,7 @@ parseExpr = parseSequence
               else return $ reverse (name' : acc)
         parseFieldInit :: ParseRes (Interner.Symbol, Absyn.Expr)
         parseFieldInit = do
-          name <- parseIdentifier 
+          name <- parseIdentifier
           Lexer.Assignment `matchOrErr` "expected = in a record literal"
           init <- parseExpr `expect` "expected record field init expr"
           return (name, init)
