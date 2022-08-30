@@ -27,11 +27,13 @@ library
   exposed-modules:
       Interpreter
       Lib
+      Semant.Types
       Syntax.Absyn
       Syntax.Interner
       Syntax.Lexer
       Syntax.Parser
       Syntax.Parser.Session
+      Unique
   other-modules:
       Paths_compiler
   hs-source-dirs:
