@@ -1,4 +1,4 @@
-module Semant.Types (typecheck, Typ(..)) where
+module Semant.Types (typecheck, Typ (..)) where
 
 import Control.Exception (assert)
 import Control.Monad.State (State, evalState, execState, get, gets, modify, put, runState)
@@ -10,7 +10,7 @@ import Data.Set qualified as Set
 import Data.Text qualified as T
 import Debug.Trace (trace)
 import Syntax.Absyn qualified as Absyn
-import Syntax.Interner (Symbol, symbolText)
+import Syntax.Interner (Symbol, symbolText, Interner)
 import Unique qualified
 
 type SymTable a = Map Symbol a
@@ -19,7 +19,6 @@ type TypeId = Unique.Unique
 
 type TypeName = Symbol
 
-{- DONT KNOW HOW TO PROGRESS THIS WITHOUT IORef-}
 data Typ
   = Int
   | Bool
@@ -40,22 +39,32 @@ type VarEnv = SymTable VarEnvEntry
 
 type TypeEnv = SymTable Typ
 
-data TcState = TcState {tEnv :: TypeEnv, errors :: [String], uniqP :: Unique.Provider}
+data TcState = TcState { tEnv :: TypeEnv, errors :: [String], uniqP :: Unique.Provider, interner :: Interner}
 
 type TcM a = State TcState a
 
-typecheck :: Unique.Provider -> Absyn.Program -> (TypeEnv, TcState)
-typecheck prov prog = runState (typecheck' prog) (newState prov)
+class HasDeclarations a where
+  declarations :: a -> [Absyn.Decl]
 
-typecheck' :: Absyn.Program -> TcM TypeEnv
-typecheck' prog = do
-  let tdefs = extractTypeDefs prog
-  tEnv <- initTypeEnv tdefs
-  let env' = trace ("initial tenv: " ++ show tEnv ) resolveSimpleTypeChains tEnv
-  return env'
+instance HasDeclarations Absyn.Program where
+  declarations (Absyn.Program decl) = decl
 
-newState :: Unique.Provider -> TcState
+instance HasDeclarations Absyn.Expr where
+  declarations (Absyn.Let decl _) = decl
+  declarations _ = []
+
+newState :: Unique.Provider -> Interner -> TcState
 newState = TcState Map.empty []
+
+typecheck :: Unique.Provider -> Interner -> Absyn.Program -> (TypeEnv, TcState)
+typecheck prov int prog = runState (typecheck' prog) (newState prov int)
+  where
+    typecheck' :: Absyn.Program -> TcM TypeEnv
+    typecheck' prog = do
+      let tdefs = extractTypeDecl prog
+      tEnv <- initTypeEnv tdefs
+      let env' = resolveNamesToTypes tEnv
+      return env'
 
 mkUnique :: TcM Unique.Unique
 mkUnique = do
@@ -64,8 +73,9 @@ mkUnique = do
   modify (\s -> s {uniqP = p'})
   return id
 
-extractTypeDefs :: Absyn.Program -> [(Symbol, Absyn.Type)]
-extractTypeDefs p = let Absyn.Program ds = p in go [] ds
+
+extractTypeDecl :: HasDeclarations a => a -> [(Symbol, Absyn.Type)]
+extractTypeDecl x = go [] $ declarations x
   where
     go :: [(Symbol, Absyn.Type)] -> [Absyn.Decl] -> [(Symbol, Absyn.Type)]
     go acc ((Absyn.TypeDecl s t) : ts) = go ((s, t) : acc) ts
@@ -84,25 +94,23 @@ initTypeEnv decls = go decls Map.empty
       Just _ -> error $ "double definition of type " ++ T.unpack (symbolText s)
     go [] env = return env
 
-transType :: Absyn.Type -> TcM Typ
-transType (Absyn.TypeName s) = return t'
-  where
-    t' = case T.unpack (symbolText s) of
+    transType :: Absyn.Type -> TcM Typ
+    transType (Absyn.TypeName s) = return $ case T.unpack (symbolText s) of
       "int" -> Int
       "bool" -> Bool
       "string" -> String
       "double" -> Double
       "nil" -> Nil
       _ -> TypeRef s
-transType (Absyn.Array t) = do
-  id <- mkUnique
-  t' <- transType t
-  return $ Array t' id
-transType (Absyn.Record fs) = do
-  id <- mkUnique
-  fs' <- mapM transField fs
-  return $ Record fs' id
-  where
+    transType (Absyn.Array t) = do
+      id <- mkUnique
+      t' <- transType t
+      return $ Array t' id
+    transType (Absyn.Record fs) = do
+      id <- mkUnique
+      fs' <- mapM transField fs
+      return $ Record fs' id
+    
     transField :: Absyn.TypedName -> TcM (Symbol, Typ)
     transField (Absyn.TypedName n t) = do
       t' <- transType t
@@ -110,13 +118,13 @@ transType (Absyn.Record fs) = do
 
 data ResolveKind = Rec | Direct deriving (Ord, Eq, Show)
 
-type ResolveHist = Map Symbol ResolveKind 
+type ResolveHist = Map Symbol ResolveKind
 
-resolveSimpleTypeChains :: TypeEnv -> TypeEnv
-resolveSimpleTypeChains tenv = 
-    let env' = resolveSimple tenv
-        env'' = resolveReferences env'
-     in env''
+resolveNamesToTypes :: TypeEnv -> TypeEnv
+resolveNamesToTypes tenv =
+  let env' = resolveSimple tenv
+      env'' = resolveReferences env'
+   in env''
   where
     resolveSimple env = List.foldl' goResolveSimple env (Map.keys env)
     goResolveSimple e s = snd $ resolveName Map.empty e s
@@ -154,27 +162,27 @@ resolveSimpleTypeChains tenv =
 
     resolveReferences :: TypeEnv -> TypeEnv
     resolveReferences env =
-        List.foldl' goResolveRefs env $ Map.keys env
+      List.foldl' goResolveRefs env $ Map.keys env
       where
         goResolveRefs :: TypeEnv -> Symbol -> TypeEnv
         goResolveRefs env name =
-          let typ = env ! name 
+          let typ = env ! name
               typ' = resolveReferencesInT name typ' typ
               env' = Map.map resolve env
               resolve = resolveReferencesInT name typ'
-          in Map.insert name typ' env'
+           in Map.insert name typ' env'
 
-    resolveReferencesInT :: 
-      {- references to type we resolve -} Symbol
-      -> {- type to resolve references to -} Typ 
-      -> {- type to resolve references in -} Typ 
-      -> {- returned type with resolved references -} Typ
-    resolveReferencesInT name t t'@(TypeRef ref) 
+    resolveReferencesInT ::
+      {- references to type we resolve -} Symbol ->
+      {- type to resolve references to -} Typ ->
+      {- type to resolve references in -} Typ ->
+      {- returned type with resolved references -} Typ
+    resolveReferencesInT name t t'@(TypeRef ref)
       | name == ref = t
       | otherwise = t'
-    resolveReferencesInT n t (Record fields id) = 
-        (`Record` id) $ map (mapSnd $ resolveReferencesInT n t) fields
+    resolveReferencesInT n t (Record fields id) =
+      (`Record` id) $ map (mapSnd $ resolveReferencesInT n t) fields
       where
         mapSnd f (x, y) = (x, f y)
     resolveReferencesInT n t (Array t' id) = (`Array` id) $ resolveReferencesInT n t t'
-    resolveReferencesInT _  _ t = t
+    resolveReferencesInT _ _ t = t

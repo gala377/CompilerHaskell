@@ -1,6 +1,7 @@
 module Syntax.Parser
   ( parse,
     parseExpr,
+    runParse,
   )
 where
 
@@ -15,17 +16,22 @@ import Data.Maybe
   )
 import Data.Text qualified as T
 import Debug.Trace (trace)
+
+import Syntax.Parser.Session
 import Syntax.Absyn qualified as Absyn
 import Syntax.Interner qualified as Interner
 import Syntax.Lexer qualified as Lexer
-import Syntax.Parser.Session
 
-parse :: String -> [Lexer.Token] -> Either [SyntaxError] Absyn.Program
-parse filename tokens = Bifunctor.first (\_ -> syntaxErrors session') parseRes
+runParse :: String -> [Lexer.Token] -> (Session, Either [SyntaxError] Absyn.Program)
+runParse filename tokens = (session', parseRes')
   where
     session = mkSession filename tokens
     action = runExceptT $ expect parseProgram "Expected top level definition"
     (parseRes, session') = runState action session
+    parseRes' = Bifunctor.first (\_ -> syntaxErrors session') parseRes
+
+parse :: String -> [Lexer.Token] -> Either [SyntaxError] Absyn.Program
+parse s t = snd $ runParse s t  
 
 parseProgram :: ParseRes Absyn.Program
 parseProgram = Absyn.Program <$> parseDeclarations []
