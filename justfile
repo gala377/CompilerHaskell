@@ -22,11 +22,11 @@ test: generate
 mosgenerate:
     alex "grammar/Lexer.x" -o "src/Syntax/Lexer.hs" --ghc
 
-mosrun: mosgenerate
-    PATH="$LLVM_12_BIN:$PATH" C_INCLUDE_PATH="$(xcrun --show-sdk-path)/usr/include/ffi" stack run
+mosrun *ARHS: mosgenerate
+    PATH="$LLVM_12_BIN:$PATH" C_INCLUDE_PATH="$(xcrun --show-sdk-path)/usr/include/ffi" stack run {{ARGS}}
 
-mosbuild: mosgenerate
-    PATH="$LLVM_12_BIN:$PATH" C_INCLUDE_PATH="$(xcrun --show-sdk-path)/usr/include/ffi" stack build
+mosbuild *ARGS: mosgenerate
+    PATH="$LLVM_12_BIN:$PATH" C_INCLUDE_PATH="$(xcrun --show-sdk-path)/usr/include/ffi" stack build {{ARGS}}
 
-mostest: mosgenerate
-    PATH="$LLVM_12_BIN:$PATH" C_INCLUDE_PATH="$(xcrun --show-sdk-path)/usr/include/ffi" stack test
+mostest *ARGS: mosgenerate
+    PATH="$LLVM_12_BIN:$PATH" C_INCLUDE_PATH="$(xcrun --show-sdk-path)/usr/include/ffi" stack test {{ARGS}}

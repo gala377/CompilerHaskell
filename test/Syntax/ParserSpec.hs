@@ -39,7 +39,9 @@ astShouldBe p got want = assertBool msg (p want got)
   where
     msg = "Expected:\n\n" ++ pretty want ++ "\n\nGot:\n\n" ++ pretty got
 
+exprShouldBe :: Absyn.Expr -> Absyn.Expr -> Expectation
 exprShouldBe = astShouldBe testCompareExpr
+declShouldBe :: Absyn.Decl -> Absyn.Decl -> Expectation
 declShouldBe = astShouldBe testCompareDecls
 
 spec :: Spec
@@ -53,6 +55,10 @@ spec = do
               , initExpr = Absyn.ConstInt 1
               }
       let Absyn.Program [res] = parse "var a = 1"
+      res `declShouldBe` expected
+    it "parses var decl with a type" $ do
+      let expected = Absyn.VariableDecl (testSymbol "a") (Just $ Absyn.TypeName $ testSymbol "b") Absyn.Nil
+      let Absyn.Program [res] = parse "var a: b = nil"
       res `declShouldBe` expected
     it "parses a function declaration" $ do
       let expected =
