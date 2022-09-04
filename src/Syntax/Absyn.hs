@@ -4,6 +4,8 @@ module Syntax.Absyn
     Decl (..),
     Type (..),
     TypedName (..),
+    Function (..),
+    Variable (..),
     testCompareDecls,
     testCompareExpr,
     testComparePrograms,
@@ -19,18 +21,22 @@ import Syntax.Interner (Symbol, symbolText)
 newtype Program = Program [Decl] deriving (Show)
 
 data Decl
-  = FunctionDecl
-      { name :: Symbol,
-        parameters :: [TypedName],
-        returnType :: Maybe Type,
-        body :: Expr
-      }
-  | VariableDecl
-      { name :: Symbol,
-        varType :: Maybe Type,
-        initExpr :: Expr
-      }
+  = FunctionDecl Symbol Function
+  | VariableDecl Symbol Variable
   | TypeDecl Symbol Type
+  deriving (Show, Eq)
+
+data Function = Function
+  { parameters :: [TypedName],
+    returnType :: Maybe Type,
+    body :: Expr
+  }
+  deriving (Show, Eq)
+
+data Variable = Variable
+  { varType :: Maybe Type,
+    initExpr :: Expr
+  }
   deriving (Show, Eq)
 
 data Type
@@ -95,8 +101,8 @@ testComparePrograms (Program decls1) (Program decls2) =
 
 testCompareDecls :: Decl -> Decl -> Bool
 testCompareDecls
-  (FunctionDecl {name = name1, parameters = par1, returnType = ret1, body = body1})
-  (FunctionDecl {name = name2, parameters = par2, returnType = ret2, body = body2}) =
+  (FunctionDecl name1 Function {parameters = par1, returnType = ret1, body = body1})
+  (FunctionDecl name2 Function {parameters = par2, returnType = ret2, body = body2}) =
     testCompareSymbols name1 name2
       && compareRetTyp ret1 ret2
       && compareParams par1 par2
@@ -111,8 +117,8 @@ testCompareDecls
         (length p1 == length p2)
           && all (uncurry testCompareTypedName) (zip p1 p2)
 testCompareDecls
-  (VariableDecl {name = name1, varType = varType1, initExpr = initExpr1})
-  (VariableDecl {name = name2, varType = varType2, initExpr = initExpr2}) =
+  (VariableDecl name1 Variable {varType = varType1, initExpr = initExpr1})
+  (VariableDecl name2 Variable {varType = varType2, initExpr = initExpr2}) =
     testCompareSymbols name1 name2
       && compareVarType varType1 varType2
       && testCompareExpr initExpr1 initExpr2

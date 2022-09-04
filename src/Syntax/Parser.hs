@@ -16,11 +16,10 @@ import Data.Maybe
   )
 import Data.Text qualified as T
 import Debug.Trace (trace)
-
-import Syntax.Parser.Session
 import Syntax.Absyn qualified as Absyn
 import Syntax.Interner qualified as Interner
 import Syntax.Lexer qualified as Lexer
+import Syntax.Parser.Session
 
 runParse :: String -> [Lexer.Token] -> (Session, Either [SyntaxError] Absyn.Program)
 runParse filename tokens = (session', parseRes')
@@ -31,7 +30,7 @@ runParse filename tokens = (session', parseRes')
     parseRes' = Bifunctor.first (\_ -> syntaxErrors session') parseRes
 
 parse :: String -> [Lexer.Token] -> Either [SyntaxError] Absyn.Program
-parse s t = snd $ runParse s t  
+parse s t = snd $ runParse s t
 
 parseProgram :: ParseRes Absyn.Program
 parseProgram = Absyn.Program <$> parseDeclarations []
@@ -69,7 +68,7 @@ parseDeclarations decls = do
           else return Nothing
       Lexer.Assignment `matchOrErr` "expected = sign after functions declaration"
       body <- parseExpr `expect` "expected functions body"
-      return $ Absyn.FunctionDecl name args typ body
+      return $ Absyn.FunctionDecl name $ Absyn.Function args typ body
 
     parseTypedName :: ParseRes Absyn.TypedName
     parseTypedName = do
@@ -104,11 +103,11 @@ parseDeclarations decls = do
       Lexer.Assignment `matchExpect` "Expected an = sign after a variable name"
       init <- parseExpr `expect` "expected init expression"
       return $
-        Absyn.VariableDecl
-          { name = id,
-            varType = typ,
-            initExpr = init
-          }
+        Absyn.VariableDecl id $
+          Absyn.Variable
+            { varType = typ,
+              initExpr = init
+            }
 
     parseType :: ParseRes Absyn.Type
     parseType = parseArrType `choice` parseTypeName `choice` parseRecordType
@@ -318,20 +317,21 @@ parseExpr = parseSequence
       Lexer.RSquareBracket `matchOrErr` "Expected closing ]"
       return $ Absyn.Indexing left inner
     parseFnCall left = do
-        arguments <- parseCallArguments [] `expect` "expected function call arguments"
-        return $ Absyn.FunctionCall left arguments
+      arguments <- parseCallArguments [] `expect` "expected function call arguments"
+      return $ Absyn.FunctionCall left arguments
       where
         parseCallArguments :: [Absyn.Expr] -> ParseRes [Absyn.Expr]
         parseCallArguments acc = do
-          expr <- (Just <$> parseExpr) `catchError` \case
-            NotThisFn -> return Nothing
-            e -> throwError e
+          expr <-
+            (Just <$> parseExpr) `catchError` \case
+              NotThisFn -> return Nothing
+              e -> throwError e
           case expr of
             Nothing -> return $ reverse acc
-            Just expr' -> match Lexer.Comma >>= \case
-              Nothing -> return $ reverse (expr' : acc)
-              Just _ -> parseCallArguments (expr' : acc)
-
+            Just expr' ->
+              match Lexer.Comma >>= \case
+                Nothing -> return $ reverse (expr' : acc)
+                Just _ -> parseCallArguments (expr' : acc)
 
     parsePrimaryExpr :: ParseRes Absyn.Expr
     parsePrimaryExpr = currToken >>= parsePrimaryExpr'

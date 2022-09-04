@@ -1,23 +1,36 @@
 module Semant.Types (typecheck, Typ (..)) where
 
 import Control.Exception (assert)
-import Control.Monad.State (State, evalState, execState, get, gets, modify, put, runState)
+import Control.Monad.Except (ExceptT)
+import Control.Monad.RWS( RWS, runRWS, )
+import Control.Monad.Reader (MonadReader(local), asks)
+import Control.Monad.State
+  ( MonadState,
+    State,
+    evalState,
+    execState,
+    get,
+    gets,
+    modify,
+    put,
+    runState,
+  )
+import Control.Monad.Writer (MonadWriter (tell))
 import Data.List qualified as List
 import Data.Map (Map, (!))
 import Data.Map qualified as Map
+import Data.Maybe qualified as Maybe
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text qualified as T
 import Debug.Trace (trace)
 import Syntax.Absyn qualified as Absyn
-import Syntax.Interner (Symbol, symbolText, Interner)
+import Syntax.Interner (Interner, Symbol, symbolString, symbolText)
 import Unique qualified
 
 type SymTable a = Map Symbol a
 
 type TypeId = Unique.Unique
-
-type TypeName = Symbol
 
 data Typ
   = Int
@@ -39,9 +52,31 @@ type VarEnv = SymTable VarEnvEntry
 
 type TypeEnv = SymTable Typ
 
-data TcState = TcState { tEnv :: TypeEnv, errors :: [String], uniqP :: Unique.Provider, interner :: Interner}
+data TcState = TcState {uniqP :: Unique.Provider, interner :: Interner}
 
-type TcM a = State TcState a
+type TcStateM a = MonadState TcState a
+
+type TcWriterM a = MonadWriter [TypeError] a
+
+type TcReaderM a = MonadReader Env a
+
+type TcM a = RWS Env [TypeError] TcState a
+
+type TypeError = String
+
+{- Env type -}
+
+type Env = (TypeEnv, VarEnv)
+
+typeEnv :: Env -> TypeEnv
+typeEnv = fst
+
+varEnv :: Env -> VarEnv
+varEnv = snd
+
+{- End Env type -}
+
+{- HasDeclarations type class -}
 
 class HasDeclarations a where
   declarations :: a -> [Absyn.Decl]
@@ -53,26 +88,21 @@ instance HasDeclarations Absyn.Expr where
   declarations (Absyn.Let decl _) = decl
   declarations _ = []
 
-newState :: Unique.Provider -> Interner -> TcState
-newState = TcState Map.empty []
-
-typecheck :: Unique.Provider -> Interner -> Absyn.Program -> (TypeEnv, TcState)
-typecheck prov int prog = runState (typecheck' prog) (newState prov int)
+extractVarDecl :: HasDeclarations a => a -> [(Symbol, Absyn.Variable)]
+extractVarDecl x = go [] $ declarations x
   where
-    typecheck' :: Absyn.Program -> TcM TypeEnv
-    typecheck' prog = do
-      let tdefs = extractTypeDecl prog
-      tEnv <- initTypeEnv tdefs
-      let env' = resolveNamesToTypes tEnv
-      return env'
+    go :: [(Symbol, Absyn.Variable)] -> [Absyn.Decl] -> [(Symbol, Absyn.Variable)]
+    go acc ((Absyn.VariableDecl s t) : ts) = go ((s, t) : acc) ts
+    go acc (_ : ts) = go acc ts
+    go acc [] = acc
 
-mkUnique :: TcM Unique.Unique
-mkUnique = do
-  p <- gets uniqP
-  let (id, p') = Unique.createUnique p
-  modify (\s -> s {uniqP = p'})
-  return id
-
+extractFnDecl :: HasDeclarations a => a -> [(Symbol, Absyn.Function)]
+extractFnDecl x = go [] $ declarations x
+  where
+    go :: [(Symbol, Absyn.Function)] -> [Absyn.Decl] -> [(Symbol, Absyn.Function)]
+    go acc ((Absyn.FunctionDecl s t) : ts) = go ((s, t) : acc) ts
+    go acc (_ : ts) = go acc ts
+    go acc [] = acc
 
 extractTypeDecl :: HasDeclarations a => a -> [(Symbol, Absyn.Type)]
 extractTypeDecl x = go [] $ declarations x
@@ -82,10 +112,105 @@ extractTypeDecl x = go [] $ declarations x
     go acc (_ : ts) = go acc ts
     go acc [] = acc
 
-initTypeEnv :: [(Symbol, Absyn.Type)] -> TcM TypeEnv
+{- End HasDeclarations type class -}
+
+newState :: Unique.Provider -> Interner -> TcState
+newState = TcState
+
+typecheck :: Unique.Provider -> Interner -> Absyn.Program -> (TypeEnv, TcState, [TypeError])
+typecheck prov int prog = runRWS (typecheck' prog) (Map.empty, Map.empty) (newState prov int)
+  where
+    typecheck' :: Absyn.Program -> TcM TypeEnv
+    typecheck' prog = do
+      tEnv <- prepareGlovalTypeEnv prog
+      vEnv <- local (const (tEnv, Map.empty)) $ prepareGlovalVarEnv prog
+      local (const (tEnv, vEnv)) $ typecheckBodies prog
+
+    typecheckBodies = undefined
+
+    prepareGlovalTypeEnv :: (TcStateM m, TcWriterM m) => Absyn.Program -> m TypeEnv
+    prepareGlovalTypeEnv prog = do
+      let tdefs = extractTypeDecl prog
+      tEnv <- initTypeEnv tdefs
+      let env' = resolveNamesToTypes tEnv
+      return env'
+
+    prepareGlovalVarEnv :: Absyn.Program -> TcM VarEnv
+    prepareGlovalVarEnv prog = do
+      let fns = extractFnDecl prog
+      let vars = extractVarDecl prog
+      fns' <- resolveDecls resolveFunDecl fns
+      vars' <- resolveDecls resolveVarDecl vars
+      let env = Map.fromList (vars' ++ fns')
+      return env
+
+    resolveDecls f =
+      traverse
+        ( \(n, d) -> do
+            d' <- f d
+            return (n, d')
+        )
+
+    resolveFunDecl (Absyn.Function args ret _) = do
+      args' <- traverse resolveTypedName args
+      ret' <- traverse resolveType ret
+      -- TODO `fromJust` should not be here. Instead the type
+      -- of the function should be deduced from its body
+      return $ Function args' $ Maybe.fromJust ret'
+    resolveVarDecl (Absyn.Variable t _) = do
+      t' <- traverse resolveType t
+      -- TODO `fromJust` should not be here. Instead the type
+      -- of the variable should be deduced from its init expr
+      return $ Var $ Maybe.fromJust t'
+
+    resolveTypedName :: Absyn.TypedName -> TcM Typ
+    resolveTypedName (Absyn.TypedName _ t) = resolveType t
+
+    resolveType :: Absyn.Type -> TcM Typ
+    resolveType t = case t of
+      Absyn.TypeName n -> lookUpTypeName n
+      Absyn.Array t -> do
+        id <- mkUnique
+        inner <- resolveType t
+        return $ Array inner id
+      Absyn.Record fs -> do
+        id <- mkUnique
+        fs' <-
+          traverse
+            ( \(Absyn.TypedName n t) -> do
+                t' <- resolveType t
+                return (n, t')
+            )
+            fs
+        return $ Record fs' id
+
+    lookUpTypeName :: (TcReaderM m, TcWriterM m) => Symbol -> m Typ
+    lookUpTypeName name = do
+      env <- asks typeEnv
+      case Map.lookup name env of
+        Just t -> return t
+        Nothing -> do
+          typeError $ "Unknown type " ++ symbolString name
+          return Unit
+
+typeError :: TcWriterM m => String -> m ()
+typeError msg = tell [msg]
+
+mkUnique :: TcStateM m => m Unique.Unique
+mkUnique = do
+  p <- gets uniqP
+  let (id, p') = Unique.createUnique p
+  modify (\s -> s {uniqP = p'})
+  return id
+
+{-
+CREATING TYPE ENV FROM DECLARATIONS
+-}
+
+initTypeEnv :: TcStateM m => [(Symbol, Absyn.Type)] -> m TypeEnv
 initTypeEnv decls = go decls Map.empty
   where
-    go :: [(Symbol, Absyn.Type)] -> TypeEnv -> TcM TypeEnv
+    go :: MonadState TcState m => [(Symbol, Absyn.Type)] -> TypeEnv -> m TypeEnv
     go ((s, t) : ts) env = case Map.lookup s env of
       Nothing -> do
         t' <- transType t
@@ -94,7 +219,7 @@ initTypeEnv decls = go decls Map.empty
       Just _ -> error $ "double definition of type " ++ T.unpack (symbolText s)
     go [] env = return env
 
-    transType :: Absyn.Type -> TcM Typ
+    transType :: MonadState TcState m => Absyn.Type -> m Typ
     transType (Absyn.TypeName s) = return $ case T.unpack (symbolText s) of
       "int" -> Int
       "bool" -> Bool
@@ -110,8 +235,8 @@ initTypeEnv decls = go decls Map.empty
       id <- mkUnique
       fs' <- mapM transField fs
       return $ Record fs' id
-    
-    transField :: Absyn.TypedName -> TcM (Symbol, Typ)
+
+    transField :: MonadState TcState m => Absyn.TypedName -> m (Symbol, Typ)
     transField (Absyn.TypedName n t) = do
       t' <- transType t
       return (n, t')

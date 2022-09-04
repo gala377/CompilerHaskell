@@ -4,6 +4,7 @@ module Syntax.Interner (
   intern,
   Symbol,
   symbolText,
+  symbolString,
   getUniqProvider,
   testSymbol,
 ) where
@@ -18,6 +19,9 @@ newtype Symbol = Symbol {unSymbol :: (Unique.Unique, T.Text)}
 
 symbolText :: Symbol -> T.Text
 symbolText (Symbol (_, t)) = t
+
+symbolString :: Symbol -> String
+symbolString (Symbol (_, t)) = T.unpack t
 
 testSymbol :: String -> Symbol
 testSymbol s = Symbol (0, T.pack s)

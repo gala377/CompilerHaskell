@@ -1,19 +1,17 @@
 module Syntax.ParserSpec (spec) where
 
-import Control.Monad.State.Lazy (State, runState)
 import Control.Monad.Except (runExceptT)
-
-import Text.Pretty.Simple (pShow)
-
+import Control.Monad.State.Lazy (State, runState)
+import Data.Text.Lazy qualified as T
 import Syntax.Absyn (testCompareDecls, testCompareExpr)
 import Syntax.Absyn qualified as Absyn
 import Syntax.Interner (testSymbol)
 import Syntax.Lexer qualified as Lexer
 import Syntax.Parser qualified as Parser
 import Syntax.Parser.Session qualified as Session
-import Test.Hspec
 import Test.HUnit (assertBool)
-import Data.Text.Lazy qualified as T
+import Test.Hspec
+import Text.Pretty.Simple (pShow)
 
 parse :: String -> Absyn.Program
 parse source =
@@ -21,10 +19,11 @@ parse source =
    in case Parser.parse "test" tokens of
         Left e -> error ("syntax errors " ++ show e)
         Right r -> r
+
 parseExpr :: String -> Absyn.Expr
 parseExpr source = case parseRes of
-    Right r -> r
-    Left _ -> error ("syntax errors " ++ show (Session.syntaxErrors session'))
+  Right r -> r
+  Left _ -> error ("syntax errors " ++ show (Session.syntaxErrors session'))
   where
     tokens = Lexer.toTokens source
     session = Session.mkSession "test" tokens
@@ -41,6 +40,7 @@ astShouldBe p got want = assertBool msg (p want got)
 
 exprShouldBe :: Absyn.Expr -> Absyn.Expr -> Expectation
 exprShouldBe = astShouldBe testCompareExpr
+
 declShouldBe :: Absyn.Decl -> Absyn.Decl -> Expectation
 declShouldBe = astShouldBe testCompareDecls
 
@@ -49,24 +49,21 @@ spec = do
   describe "parse" $ do
     it "parses var decl with simple init expr" $ do
       let expected =
-            Absyn.VariableDecl
-              { name = testSymbol "a"
-              , varType = Nothing
-              , initExpr = Absyn.ConstInt 1
-              }
+            Absyn.VariableDecl (testSymbol "a") (Absyn.Variable Nothing (Absyn.ConstInt 1))
       let Absyn.Program [res] = parse "var a = 1"
       res `declShouldBe` expected
     it "parses var decl with a type" $ do
-      let expected = Absyn.VariableDecl (testSymbol "a") (Just $ Absyn.TypeName $ testSymbol "b") Absyn.Nil
+      let expected = Absyn.VariableDecl (testSymbol "a") $ Absyn.Variable (Just $ Absyn.TypeName $ testSymbol "b") Absyn.Nil
       let Absyn.Program [res] = parse "var a: b = nil"
       res `declShouldBe` expected
     it "parses a function declaration" $ do
       let expected =
             Absyn.FunctionDecl
               (testSymbol "foo")
-              [Absyn.TypedName (testSymbol "arg") $ Absyn.TypeName $ testSymbol "argt"]
-              (Just $ Absyn.TypeName  $ testSymbol "ret")
-              (Absyn.ConstInt 10)
+              $ Absyn.Function
+                [Absyn.TypedName (testSymbol "arg") $ Absyn.TypeName $ testSymbol "argt"]
+                (Just $ Absyn.TypeName $ testSymbol "ret")
+                (Absyn.ConstInt 10)
       let Absyn.Program [res] = parse "function foo(arg: argt): ret = 10"
       res `declShouldBe` expected
     it "parser a type decl" $ do
@@ -81,11 +78,13 @@ spec = do
     it "parses access chain" $ do
       let expected =
             Absyn.Access
-              (Absyn.Access 
-                (Absyn.Access 
-                    (Absyn.Identifier $ testSymbol "a")
-                    (testSymbol "b"))
-                (testSymbol "c"))
+              ( Absyn.Access
+                  ( Absyn.Access
+                      (Absyn.Identifier $ testSymbol "a")
+                      (testSymbol "b")
+                  )
+                  (testSymbol "c")
+              )
               (testSymbol "d")
       let res = parseExpr "a.b.c.d"
       res `exprShouldBe` expected
@@ -99,15 +98,19 @@ spec = do
     it "parses access chain with indexing" $ do
       let expected =
             Absyn.Indexing
-              (Absyn.Access
-                (Absyn.Access 
-                  (Absyn.Indexing 
-                      (Absyn.Identifier $ testSymbol "a")
-                      (Absyn.Add 
-                        (Absyn.Identifier $ testSymbol "b")
-                        (Absyn.ConstInt 100)))
-                  (testSymbol "c"))
-                (testSymbol "d"))
+              ( Absyn.Access
+                  ( Absyn.Access
+                      ( Absyn.Indexing
+                          (Absyn.Identifier $ testSymbol "a")
+                          ( Absyn.Add
+                              (Absyn.Identifier $ testSymbol "b")
+                              (Absyn.ConstInt 100)
+                          )
+                      )
+                      (testSymbol "c")
+                  )
+                  (testSymbol "d")
+              )
               (Absyn.ConstInt 100)
       let res = parseExpr "a[b + 100].c.d[100]"
       res `exprShouldBe` expected
@@ -116,15 +119,19 @@ spec = do
             Absyn.Negate $
               Absyn.Negate $
                 Absyn.Indexing
-                  (Absyn.Access
-                    (Absyn.Access 
-                      (Absyn.Indexing 
-                          (Absyn.Identifier $ testSymbol "a")
-                          (Absyn.Add 
-                            (Absyn.Identifier $ testSymbol "b")
-                            (Absyn.ConstInt 100)))
-                      (testSymbol "c"))
-                    (testSymbol "d"))
+                  ( Absyn.Access
+                      ( Absyn.Access
+                          ( Absyn.Indexing
+                              (Absyn.Identifier $ testSymbol "a")
+                              ( Absyn.Add
+                                  (Absyn.Identifier $ testSymbol "b")
+                                  (Absyn.ConstInt 100)
+                              )
+                          )
+                          (testSymbol "c")
+                      )
+                      (testSymbol "d")
+                  )
                   (Absyn.ConstInt 100)
       let res = parseExpr "--a[b + 100].c.d[100]"
       res `exprShouldBe` expected
@@ -133,21 +140,21 @@ spec = do
       let res = parseExpr "a[100] of 200"
       res `exprShouldBe` expected
     it "parses complex record literal" $ do
-      let expected = 
-              Absyn.RecordLit 
-                (testSymbol "a")
-                [ (testSymbol "b", Absyn.ConstInt 100)
-                , (testSymbol "c", Absyn.ArrayLit (testSymbol "d") (Absyn.ConstInt 100) (Absyn.ConstInt 200))
-                ]
+      let expected =
+            Absyn.RecordLit
+              (testSymbol "a")
+              [ (testSymbol "b", Absyn.ConstInt 100),
+                (testSymbol "c", Absyn.ArrayLit (testSymbol "d") (Absyn.ConstInt 100) (Absyn.ConstInt 200))
+              ]
       let res = parseExpr "a { b = 100, c = d[100] of 200 }"
       res `exprShouldBe` expected
     it "parses a function call" $ do
-      let expected = 
-              Absyn.FunctionCall
-                (Absyn.Access (Absyn.Identifier $ testSymbol "a") (testSymbol "b"))
-                [ Absyn.Add (Absyn.ConstInt 1) (Absyn.ConstInt 2)
-                , Absyn.ConstInt 3
-                ]
+      let expected =
+            Absyn.FunctionCall
+              (Absyn.Access (Absyn.Identifier $ testSymbol "a") (testSymbol "b"))
+              [ Absyn.Add (Absyn.ConstInt 1) (Absyn.ConstInt 2),
+                Absyn.ConstInt 3
+              ]
       let res = parseExpr "a.b(1+2, 3)"
       res `exprShouldBe` expected
 
