@@ -38,11 +38,13 @@ parseProgram = Absyn.Program <$> parseDeclarations []
 parseDeclarations :: [Absyn.Decl] -> ParseRes [Absyn.Decl]
 parseDeclarations decls = do
   curr <- currToken
-  if curr == Lexer.EOF
+  if (curr == Lexer.EOF) || (curr == Lexer.In)
     then return $ reverse decls
-    else do
-      decl <- expect parseDecl "expected declaration on the top level"
-      parseDeclarations (decl : decls)
+    else
+      ( do
+          decl <- expect parseDecl "expected declaration"
+          parseDeclarations (decl : decls)
+      )
   where
     parseDecl :: ParseRes Absyn.Decl
     parseDecl = parseFunDecl `choice` parseVarDecl `choice` parseTypeDecl
@@ -159,6 +161,7 @@ parseExpr = parseSequence
           [ (Lexer.If, parseIf),
             (Lexer.While, parseWhile),
             (Lexer.Break, return Absyn.Break),
+            (Lexer.Continue, return Absyn.Continue),
             (Lexer.For, parseFor),
             (Lexer.Let, parseLet)
           ]
