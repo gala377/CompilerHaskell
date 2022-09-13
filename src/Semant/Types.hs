@@ -230,8 +230,8 @@ type ResolveHist = Map Symbol ResolveKind
 
 resolveTypeRefs :: TcWriterM m => TypeEnv -> m TypeEnv
 resolveTypeRefs tenv = do
-    env' <- resolveSimple tenv
-    return $ resolveReferences env'
+  env' <- resolveSimple tenv
+  return $ resolveReferences env'
   where
     resolveSimple :: TcWriterM m => TypeEnv -> m TypeEnv
     resolveSimple env = foldM goResolveSimple env (Map.keys env)
@@ -489,12 +489,70 @@ typecheckExp letExpr@(Absyn.Let _ body) = do
     resolveNoRecVars (Absyn.Variable Nothing body) = do
       t <- typecheckExp body
       return $ Var t
-typecheckExp (Absyn.Assignment left right) = undefined
-typecheckExp (Absyn.Add _ _) = undefined
-typecheckExp (Absyn.Sub _ _) = undefined
-typecheckExp (Absyn.Division _ _) = undefined
-typecheckExp (Absyn.Mult _ _) = undefined
-typecheckExp (Absyn.Negate _) = undefined
+typecheckExp (Absyn.Assignment left right) = do
+  rightT <- typecheckExp right
+  leftT <- case left of
+    ident@(Absyn.Identifier _) -> typecheckExp ident
+    accs@(Absyn.Access _ _) -> typecheckExp accs
+    indx@(Absyn.Indexing _ _) -> typecheckExp indx
+    _ -> do
+      typeError "left side of an assignment is not an lvalue"
+      return Error
+  checkTypesEq leftT rightT "assignment types mismatched"
+  return Unit
+typecheckExp (Absyn.Add left right) = do
+  leftT <- typecheckExp left
+  rightT <- typecheckExp right
+  let compTypes = Maybe.isJust $ List.find (typesEq leftT) [Int, Double, String]
+  if compTypes
+    then do
+      checkTypesEq leftT rightT "both sides of add need to have the same type"
+      return leftT
+    else do
+      typeError "This type does not support addition"
+      return Error
+typecheckExp (Absyn.Sub left right) = do
+  leftT <- typecheckExp left
+  rightT <- typecheckExp right
+  let compTypes = Maybe.isJust $ List.find (typesEq leftT) [Int, Double, String]
+  if compTypes
+    then do
+      checkTypesEq leftT rightT "both sides of sub need to have the same type"
+      return leftT
+    else do
+      typeError "This type does not support substraction"
+      return Error
+typecheckExp (Absyn.Division left right) = do
+  leftT <- typecheckExp left
+  rightT <- typecheckExp right
+  let compTypes = Maybe.isJust $ List.find (typesEq leftT) [Int, Double]
+  if compTypes
+    then do
+      checkTypesEq leftT rightT "both sides of div need to have the same type"
+      return leftT
+    else do
+      typeError "This type does not support division"
+      return Error
+typecheckExp (Absyn.Mult left right) = do
+  leftT <- typecheckExp left
+  rightT <- typecheckExp right
+  let compTypes = Maybe.isJust $ List.find (typesEq leftT) [Int, Double]
+  if compTypes
+    then do
+      checkTypesEq leftT rightT "both sides of mult need to have the same type"
+      return leftT
+    else do
+      typeError "This type does not support multiplication"
+      return Error
+typecheckExp (Absyn.Negate body) = do
+  t <- typecheckExp body
+  case t of
+    Int -> return Int
+    Double -> return Double
+    Error -> return Error
+    _ -> do
+      typeError "only numeric types can be negated"
+      return Error
 typecheckExp (Absyn.Indexing arr idx) = do
   arrT <- typecheckExp arr
   idx <- typecheckExp idx
@@ -527,7 +585,30 @@ typecheckExp (Absyn.Access left field) = do
     extractField [] = Nothing
     extractField ((s, t) : rest) | s == field = Just t
     extractField (_ : rest) = extractField rest
-typecheckExp (Absyn.FunctionCall _ _) = undefined
+typecheckExp (Absyn.FunctionCall func pars) = do
+  case func of
+    Absyn.Identifier name -> do
+      funcEntry <- asks $ Map.lookup name . varEnv
+      case funcEntry of
+        Just (Function parT retT) -> do
+          if length parT == length pars
+            then do
+              traverse_ 
+                (\(t, e) -> do t' <- typecheckExp e; checkTypesEq t' t "mismatched type of function call argument")
+                (zip parT pars)
+              return retT
+            else do
+              typeError $ "mismatched number of arguments when calling a function " ++ symbolString name
+              return Error
+        Just (Var _) -> do
+          typeError "trying to call a variable and not a function"
+          return Error
+        Nothing -> do
+          typeError $ "Unknown identifier " ++ symbolString name
+          return Error
+    _ -> do
+      typeError "Currently only names can be called"
+      return Error
 typecheckExp (Absyn.Sequence curr next) = do
   typecheckExp curr
   typecheckExp next
