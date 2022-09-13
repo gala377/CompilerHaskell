@@ -131,19 +131,6 @@ typecheck prov int prog = runRWS (typecheck' prog) (Map.empty, Map.empty) (newSt
       vEnv <- local (const (tEnv, Map.empty)) $ prepareGlobalVarEnv prog
       local (const (tEnv, vEnv)) $ typecheckBodies $ declarations prog
 
-    -- variables are already typechecked
-    typecheckBodies :: [Absyn.Decl] -> TcM ()
-    typecheckBodies (Absyn.FunctionDecl name (Absyn.Function args _ body) : ds) = do
-      venv <- asks varEnv
-      let Function pars ret = venv ! name
-      let args' = zip (fmap (\(Absyn.TypedName name _) -> name) args) pars
-      let venv' = foldl (\env (n, t) -> Map.insert n (Var t) env) venv args'
-      local (\(tenv, _) -> (tenv, venv')) $ do
-        bodyT <- typecheckExp body
-        checkTypesEq ret bodyT "Return type of a function and its body do not match"
-      typecheckBodies ds
-    typecheckBodies (_ : ds) = typecheckBodies ds
-    typecheckBodies [] = return ()
 
     prepareGlobalTypeEnv :: (TcStateM m, TcWriterM m) => Absyn.Program -> m TypeEnv
     prepareGlobalTypeEnv prog = do
@@ -373,6 +360,19 @@ resolveFunDecl (Absyn.Function args ret _) = do
 resolveTypedName :: Absyn.TypedName -> TcM Typ
 resolveTypedName (Absyn.TypedName _ t) = resolveType t
 
+typecheckBodies :: [Absyn.Decl] -> TcM ()
+typecheckBodies (Absyn.FunctionDecl name (Absyn.Function args _ body) : ds) = do
+  venv <- asks varEnv
+  let Function pars ret = venv ! name
+  let args' = zip (fmap (\(Absyn.TypedName name _) -> name) args) pars
+  let venv' = foldl (\env (n, t) -> Map.insert n (Var t) env) venv args'
+  local (\(tenv, _) -> (tenv, venv')) $ do
+    bodyT <- typecheckExp body
+    checkTypesEq ret bodyT "Return type of a function and its body do not match"
+  typecheckBodies ds
+typecheckBodies (_ : ds) = typecheckBodies ds
+typecheckBodies [] = return ()
+
 typecheckExp :: Absyn.Expr -> TcM Typ
 typecheckExp (Absyn.ConstBool _) = return Bool
 typecheckExp (Absyn.ConstDouble _) = return Double
@@ -469,7 +469,7 @@ typecheckExp (Absyn.Gt left right) = do
 typecheckExp (Absyn.Lt left right) = typecheckExp (Absyn.Gt left right)
 typecheckExp (Absyn.GtEq left right) = typecheckExp (Absyn.Gt left right)
 typecheckExp (Absyn.LtEq left right) = typecheckExp (Absyn.Gt left right)
-typecheckExp letExpr@(Absyn.Let _ body) = do
+typecheckExp letExpr@(Absyn.Let decl body) = do
   let types = extractTypeDecl letExpr
   let functions = extractFnDecl letExpr
   let vars = extractVarDecl letExpr
@@ -477,8 +477,9 @@ typecheckExp letExpr@(Absyn.Let _ body) = do
   tenv' <- prepareTypeEnv tenv types
   local (\(_, ve) -> (tenv', ve)) $ do
     functions' <- resolveDecls resolveFunDecl functions
-    vars' <- resolveDecls resolveNoRecVars vars
     let venv' = List.foldl' (\e (n, f) -> Map.insert n f e) venv functions'
+    local (\(te, _) -> (te, venv')) $ typecheckBodies decl
+    vars' <- resolveDecls resolveNoRecVars vars
     let venv'' = List.foldl' (\e (n, v) -> Map.insert n v e) venv' vars'
     local (const (tenv', venv'')) $ typecheckExp body
   where

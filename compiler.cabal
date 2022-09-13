@@ -27,6 +27,7 @@ library
   exposed-modules:
       Interpreter
       Lib
+      Semant.Loops
       Semant.Types
       Syntax.Absyn
       Syntax.Interner
