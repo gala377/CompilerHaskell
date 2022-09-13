@@ -475,11 +475,12 @@ typecheckExp letExpr@(Absyn.Let _ body) = do
   let vars = extractVarDecl letExpr
   (tenv, venv) <- ask
   tenv' <- prepareTypeEnv tenv types
-  functions' <- resolveDecls resolveFunDecl functions
-  vars' <- resolveDecls resolveNoRecVars vars
-  let venv' = List.foldl' (\e (n, f) -> Map.insert n f e) venv functions'
-  let venv'' = List.foldl' (\e (n, v) -> Map.insert n v e) venv' vars'
-  local (const (tenv', venv'')) $ typecheckExp body
+  local (\(_, ve) -> (tenv', ve)) $ do
+    functions' <- resolveDecls resolveFunDecl functions
+    vars' <- resolveDecls resolveNoRecVars vars
+    let venv' = List.foldl' (\e (n, f) -> Map.insert n f e) venv functions'
+    let venv'' = List.foldl' (\e (n, v) -> Map.insert n v e) venv' vars'
+    local (const (tenv', venv'')) $ typecheckExp body
   where
     resolveNoRecVars (Absyn.Variable (Just t) body) = do
       t <- resolveType t
