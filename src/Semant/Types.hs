@@ -1,9 +1,10 @@
 module Semant.Types (typecheck, Typ (..)) where
 
 import Control.Exception (assert)
+import Control.Monad (foldM)
 import Control.Monad.Except (ExceptT)
 import Control.Monad.RWS (RWS, RWST (RWST), runRWS)
-import Control.Monad.Reader (MonadReader (local), asks)
+import Control.Monad.Reader (MonadReader (local), ask, asks)
 import Control.Monad.State
   ( MonadState,
     State,
@@ -171,77 +172,9 @@ typecheck prov int prog = runRWS (typecheck' prog) (Map.empty, Map.empty) (newSt
       -- todo: check for duplicates
       let env = Map.fromList fns'
       local (\(tenv, _) -> (tenv, env)) $ do
-        vars' <- resolveVarDecl vars
+        vars' <- resolveVarDecls vars
         let env = Map.fromList (vars' ++ fns')
         return env
-
-    resolveDecls f =
-      traverse
-        ( \(n, d) -> do
-            d' <- f d
-            return (n, d')
-        )
-
-    resolveFunDecl (Absyn.Function args ret _) = do
-      args' <- traverse resolveTypedName args
-      ret' <- traverse resolveType ret
-      return $ Function args' $ Maybe.fromMaybe Unit ret'
-
-    resolveVarDecl :: [(Symbol, Absyn.Variable)] -> TcM [(Symbol, VarEnvEntry)]
-    resolveVarDecl ((name, Absyn.Variable (Just t) body) : tail) = do
-      p <- inVarEnv name
-      if p then do
-        typeError $ "redeclaration of a name " ++ symbolString name
-        resolveVarDecl tail
-      else do
-        t' <- resolveType t
-        expT <- typecheckExp body
-        checkTypesEq t' expT "body and a declared type of a variable do not match"
-        addToVarEnv name t' $ resolveVarDecl tail
-    resolveVarDecl ((name, Absyn.Variable Nothing body) : tail) = do
-      p <- inVarEnv name
-      if p then do
-        typeError $ "redeclaration of a name " ++ symbolString name
-        resolveVarDecl tail
-      else do
-        t <- typecheckExp body
-        addToVarEnv name t $ resolveVarDecl tail
-    resolveVarDecl [] = asks $ Map.toList . varEnv
-
-    addToVarEnv :: Symbol -> Typ -> TcM a -> TcM a
-    addToVarEnv name t = local $ Bifunctor.second $ Map.insert name $ Var t
-
-    inVarEnv :: Symbol -> TcM Bool
-    inVarEnv name = asks $ Map.member name . varEnv
-
-    resolveTypedName :: Absyn.TypedName -> TcM Typ
-    resolveTypedName (Absyn.TypedName _ t) = resolveType t
-
-    resolveType :: Absyn.Type -> TcM Typ
-    resolveType (Absyn.TypeName n) = lookUpTypeName n
-    resolveType (Absyn.Array t) = do
-        id <- mkUnique
-        inner <- resolveType t
-        return $ Array inner id
-    resolveType (Absyn.Record fs) = do
-        id <- mkUnique
-        fs' <-
-          traverse
-            ( \(Absyn.TypedName n t) -> do
-                t' <- resolveType t
-                return (n, t')
-            )
-            fs
-        return $ Record fs' id
-
-    lookUpTypeName :: (TcReaderM m, TcWriterM m) => Symbol -> m Typ
-    lookUpTypeName name = do
-      env <- asks typeEnv
-      case Map.lookup name env of
-        Just t -> return t
-        Nothing -> do
-          typeError $ "Unknown type " ++ symbolString name
-          return Error
 
 typeError :: TcWriterM m => String -> m ()
 typeError msg = tell [msg]
@@ -257,24 +190,26 @@ mkUnique = do
 CREATING TYPE ENV FROM DECLARATIONS
 -}
 
-prepareTypeEnv :: TcStateM m => TypeEnv -> [(Symbol, Absyn.Type)] -> m TypeEnv
+prepareTypeEnv :: (TcStateM m, TcWriterM m) => TypeEnv -> [(Symbol, Absyn.Type)] -> m TypeEnv
 prepareTypeEnv env decls = do
   env' <- initTypeEnv env decls
-  return $ resolveTypeRefs env'
+  resolveTypeRefs env'
 
-initTypeEnv :: TcStateM m => TypeEnv -> [(Symbol, Absyn.Type)] -> m TypeEnv
+initTypeEnv :: (TcStateM m, TcWriterM m) => TypeEnv -> [(Symbol, Absyn.Type)] -> m TypeEnv
 initTypeEnv env decls = go decls env
   where
-    go :: TcStateM m => [(Symbol, Absyn.Type)] -> TypeEnv -> m TypeEnv
+    go :: (TcStateM m, TcWriterM m) => [(Symbol, Absyn.Type)] -> TypeEnv -> m TypeEnv
     go ((s, t) : ts) env = case Map.lookup s env of
       Nothing -> do
         t' <- transType env t
         go ts $ Map.insert s t' env
-      Just _ -> error $ "double definition of type " ++ T.unpack (symbolText s)
+      Just _ -> do
+        typeError $ "double definition of type " ++ T.unpack (symbolText s)
+        go ts env
     go [] env = return env
 
     transType :: MonadState TcState m => TypeEnv -> Absyn.Type -> m Typ
-    transType env (Absyn.TypeName s)  = return $ Maybe.fromMaybe (TypeRef s) $ Map.lookup s env
+    transType env (Absyn.TypeName s) = return $ Maybe.fromMaybe (TypeRef s) $ Map.lookup s env
     transType env (Absyn.Array t) = do
       id <- mkUnique
       t' <- transType env t
@@ -293,45 +228,54 @@ data ResolveKind = Rec | Direct deriving (Ord, Eq, Show)
 
 type ResolveHist = Map Symbol ResolveKind
 
-resolveTypeRefs :: TypeEnv -> TypeEnv
-resolveTypeRefs tenv =
-  let env' = resolveSimple tenv
-      env'' = resolveReferences env'
-   in env''
+resolveTypeRefs :: TcWriterM m => TypeEnv -> m TypeEnv
+resolveTypeRefs tenv = do
+    env' <- resolveSimple tenv
+    return $ resolveReferences env'
   where
-    resolveSimple env = List.foldl' goResolveSimple env (Map.keys env)
-    goResolveSimple e s = snd $ resolveName Map.empty e s
+    resolveSimple :: TcWriterM m => TypeEnv -> m TypeEnv
+    resolveSimple env = foldM goResolveSimple env (Map.keys env)
+    goResolveSimple :: TcWriterM m => TypeEnv -> Symbol -> m TypeEnv
+    goResolveSimple e s = do
+      (_, e') <- resolveName Map.empty e s
+      return e'
 
-    resolveName :: ResolveHist -> TypeEnv -> Symbol -> (Typ, TypeEnv)
-    resolveName hist env name = resolveDef hist env name $ case Map.lookup name env of
-      Nothing -> error $ "undefined type " ++ T.unpack (symbolText name)
-      Just n -> trace ("for " ++ show name ++ " found type " ++ show n) n
+    resolveName :: TcWriterM m => ResolveHist -> TypeEnv -> Symbol -> m (Typ, TypeEnv)
+    resolveName hist env name = do
+      t <- case Map.lookup name env of
+        Nothing -> do
+          typeError $ "undefined type " ++ T.unpack (symbolText name)
+          return Error
+        Just n -> return n
+      resolveDef hist env name t
 
     addToHist name val hist =
       let assertion = assert $ not $ Map.member name hist
        in assertion `seq` Map.insert name val hist
 
-    resolveDef :: ResolveHist -> TypeEnv -> Symbol -> Typ -> (Typ, TypeEnv)
+    resolveDef :: TcWriterM m => ResolveHist -> TypeEnv -> Symbol -> Typ -> m (Typ, TypeEnv)
     -- type a = // type a = b
     resolveDef hist env name trt@(TypeRef ref) =
       let hist' = trace ("hist is " ++ show hist) $ trace ("type " ++ T.unpack (symbolText name)) $ addToHist name Direct hist
        in case hist' `seq` trace ("found type alias to " ++ show ref) Map.lookup ref hist' of
             -- did not see this type before, so we can safely resolve it
-            Nothing ->
-              let (t, env') = resolveName hist' env ref
-               in (t, Map.insert name t env')
+            Nothing -> do
+              (t, env') <- resolveName hist' env ref
+              return (t, Map.insert name t env')
             -- we saw ref before but it was though the reference
             -- But this is fine, for example:
             -- type a = { foo: ref }
             -- type ref = a
             -- we just bite the bullet and stop here
-            Just Rec -> trace "recursive type so resolved to type alias" (trt, env)
+            Just Rec -> return $ trace "recursive type so resolved to type alias" (trt, env)
             -- we saw this ref before but as a direct definition
             -- for example
             -- type a = b
             -- type b = a
-            Just Direct -> error $ "type " ++ T.unpack (symbolText ref) ++ "is part of a definition cycle"
-    resolveDef _ env _ t = (t, env)
+            Just Direct -> do
+              typeError $ "type " ++ T.unpack (symbolText ref) ++ "is part of a definition cycle"
+              return (Error, env)
+    resolveDef _ env _ t = return (t, env)
 
     resolveReferences :: TypeEnv -> TypeEnv
     resolveReferences env =
@@ -343,7 +287,6 @@ resolveTypeRefs tenv =
               typ' = resolveReferencesInT name typ' typ
               env' = Map.map (resolveReferencesInT name typ') env
            in Map.insert name typ' env'
-
 
     resolveReferencesInT ::
       {- references to type we resolve -} Symbol ->
@@ -359,6 +302,76 @@ resolveTypeRefs tenv =
         mapSnd f (x, y) = (x, f y)
     resolveReferencesInT n t (Array t' id) = (`Array` id) $ resolveReferencesInT n t t'
     resolveReferencesInT _ _ t = t
+
+resolveVarDecls :: [(Symbol, Absyn.Variable)] -> TcM [(Symbol, VarEnvEntry)]
+resolveVarDecls ((name, Absyn.Variable (Just t) body) : tail) = do
+  p <- inVarEnv name
+  if p
+    then do
+      typeError $ "redeclaration of a name " ++ symbolString name
+      resolveVarDecls tail
+    else do
+      t' <- resolveType t
+      expT <- typecheckExp body
+      checkTypesEq t' expT "body and a declared type of a variable do not match"
+      addToVarEnv name t' $ resolveVarDecls tail
+resolveVarDecls ((name, Absyn.Variable Nothing body) : tail) = do
+  p <- inVarEnv name
+  if p
+    then do
+      typeError $ "redeclaration of a name " ++ symbolString name
+      resolveVarDecls tail
+    else do
+      t <- typecheckExp body
+      addToVarEnv name t $ resolveVarDecls tail
+resolveVarDecls [] = asks $ Map.toList . varEnv
+
+addToVarEnv :: Symbol -> Typ -> TcM a -> TcM a
+addToVarEnv name t = local $ Bifunctor.second $ Map.insert name $ Var t
+
+inVarEnv :: Symbol -> TcM Bool
+inVarEnv name = asks $ Map.member name . varEnv
+
+resolveType :: Absyn.Type -> TcM Typ
+resolveType (Absyn.TypeName n) = lookUpTypeName n
+resolveType (Absyn.Array t) = do
+  id <- mkUnique
+  inner <- resolveType t
+  return $ Array inner id
+resolveType (Absyn.Record fs) = do
+  id <- mkUnique
+  fs' <-
+    traverse
+      ( \(Absyn.TypedName n t) -> do
+          t' <- resolveType t
+          return (n, t')
+      )
+      fs
+  return $ Record fs' id
+
+lookUpTypeName :: (TcReaderM m, TcWriterM m) => Symbol -> m Typ
+lookUpTypeName name = do
+  env <- asks typeEnv
+  case Map.lookup name env of
+    Just t -> return t
+    Nothing -> do
+      typeError $ "Unknown type " ++ symbolString name
+      return Error
+
+resolveDecls f =
+  traverse
+    ( \(n, d) -> do
+        d' <- f d
+        return (n, d')
+    )
+
+resolveFunDecl (Absyn.Function args ret _) = do
+  args' <- traverse resolveTypedName args
+  ret' <- traverse resolveType ret
+  return $ Function args' $ Maybe.fromMaybe Unit ret'
+
+resolveTypedName :: Absyn.TypedName -> TcM Typ
+resolveTypedName (Absyn.TypedName _ t) = resolveType t
 
 typecheckExp :: Absyn.Expr -> TcM Typ
 typecheckExp (Absyn.ConstBool _) = return Bool
@@ -453,10 +466,85 @@ typecheckExp (Absyn.Gt left right) = do
     _ -> do
       typeError "relational opearator require both sides to be numeric type"
   return Bool
-
-typeCheckExp (Absyn.Lt left right) = typecheckExp (Absyn.Gt left right)
-typeCheckExp (Absyn.GtEq left right) = typecheckExp (Absyn.Gt left right)
-typeCheckExp (Absyn.LtEq left right) = typecheckExp (Absyn.Gt left right)
+typecheckExp (Absyn.Lt left right) = typecheckExp (Absyn.Gt left right)
+typecheckExp (Absyn.GtEq left right) = typecheckExp (Absyn.Gt left right)
+typecheckExp (Absyn.LtEq left right) = typecheckExp (Absyn.Gt left right)
+typecheckExp letExpr@(Absyn.Let _ body) = do
+  let types = extractTypeDecl letExpr
+  let functions = extractFnDecl letExpr
+  let vars = extractVarDecl letExpr
+  (tenv, venv) <- ask
+  tenv' <- prepareTypeEnv tenv types
+  functions' <- resolveDecls resolveFunDecl functions
+  vars' <- resolveDecls resolveNoRecVars vars
+  let venv' = List.foldl' (\e (n, f) -> Map.insert n f e) venv functions'
+  let venv'' = List.foldl' (\e (n, v) -> Map.insert n v e) venv' vars'
+  local (const (tenv', venv'')) $ typecheckExp body
+  where
+    resolveNoRecVars (Absyn.Variable (Just t) body) = do
+      t <- resolveType t
+      expT <- typecheckExp body
+      checkTypesEq t expT "Variables type and its body type do not match"
+      return $ Var t
+    resolveNoRecVars (Absyn.Variable Nothing body) = do
+      t <- typecheckExp body
+      return $ Var t
+typecheckExp (Absyn.Assignment left right) = undefined
+typecheckExp (Absyn.Add _ _) = undefined
+typecheckExp (Absyn.Sub _ _) = undefined
+typecheckExp (Absyn.Division _ _) = undefined
+typecheckExp (Absyn.Mult _ _) = undefined
+typecheckExp (Absyn.Negate _) = undefined
+typecheckExp (Absyn.Indexing arr idx) = do
+  arrT <- typecheckExp arr
+  idx <- typecheckExp idx
+  case idx of
+    Int -> return ()
+    Error -> return ()
+    _ -> do
+      typeError "Array index has to be an integer"
+      return ()
+  case arrT of
+    Error -> return Error
+    Array elemT _ -> return elemT
+    _ -> do
+      typeError "Only arrays can be indexed"
+      return Error
+typecheckExp (Absyn.Access left field) = do
+  leftT <- typecheckExp left
+  case leftT of
+    Record fields _ -> case extractField fields of
+      Just t -> return t
+      Nothing -> do
+        typeError $ "this record does not have a field " ++ symbolString field
+        return Error
+    Error -> return Error
+    _ -> do
+      typeError "access can only be done on records"
+      return Error
+  where
+    extractField :: [(Symbol, Typ)] -> Maybe Typ
+    extractField [] = Nothing
+    extractField ((s, t) : rest) | s == field = Just t
+    extractField (_ : rest) = extractField rest
+typecheckExp (Absyn.FunctionCall _ _) = undefined
+typecheckExp (Absyn.Sequence curr next) = do
+  typecheckExp curr
+  typecheckExp next
+typecheckExp (Absyn.If cond pos neg) = do
+  condT <- typecheckExp cond
+  checkTypesEq condT Bool "if's condition has to be a boolean"
+  posT <- typecheckExp pos
+  negT <- typecheckExp neg
+  checkTypesEq posT negT "if's then and else branch need to have the same type"
+  return posT
+typecheckExp (Absyn.While cond body) = do
+  condT <- typecheckExp cond
+  checkTypesEq condT Bool "while's condition has to be a boolean"
+  typecheckExp body
+  return Unit
+typecheckExp (Absyn.For _ _ _ _) = undefined
+typecheckExp Absyn.ErrorExpr = return Error
 
 intern :: TcStateM m => String -> m Symbol
 intern name = do
