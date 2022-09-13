@@ -409,7 +409,7 @@ typecheckExp (Absyn.ArrayLit t limit init) = do
     checkLimitType Int = return ()
     checkLimitType _ = typeError "A size of an array has to be an interger"
 typecheckExp (Absyn.RecordLit t fields) = do
-  recType <- resolveTypeName t >>= checkRecordType
+  recType <- resolveTypeName t
   case recType of
     Error -> return Error
     Record fieldTypes _ -> do
@@ -422,10 +422,10 @@ typecheckExp (Absyn.RecordLit t fields) = do
         else do
           typeError "Not all fields are present in the record literal"
           return recType
+    _ -> do
+      typeError "record literal expects a record type "
+      return Error
   where
-    checkRecordType t@(Record _ _) = return t
-    checkRecordType _ = typeError "Record literal expects a record type" >> return Error
-
     typeCheckField :: Map Symbol Typ -> (Symbol, Absyn.Expr) -> TcM ()
     typeCheckField fields (name, init) = do
       let fieldType = fields ! name
