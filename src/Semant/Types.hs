@@ -594,7 +594,7 @@ typecheckExp (Absyn.FunctionCall func pars) = do
         Just (Function parT retT) -> do
           if length parT == length pars
             then do
-              traverse_ 
+              traverse_
                 (\(t, e) -> do t' <- typecheckExp e; checkTypesEq t' t "mismatched type of function call argument")
                 (zip parT pars)
               return retT
