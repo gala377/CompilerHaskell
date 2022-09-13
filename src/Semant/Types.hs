@@ -625,7 +625,13 @@ typecheckExp (Absyn.While cond body) = do
   checkTypesEq condT Bool "while's condition has to be a boolean"
   typecheckExp body
   return Unit
-typecheckExp (Absyn.For _ _ _ _) = undefined
+typecheckExp (Absyn.For var init limit body) = do
+  initT <- typecheckExp init
+  checkTypesEq initT Int "init expression of a for loop has to ben an integer"
+  limitT <- typecheckExp limit
+  checkTypesEq limitT Int "limit expression of a for loop has to be an interger"
+  addToVarEnv var Int $ typecheckExp body
+  return Unit
 typecheckExp Absyn.ErrorExpr = return Error
 
 intern :: TcStateM m => String -> m Symbol
