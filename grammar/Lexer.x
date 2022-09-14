@@ -19,6 +19,7 @@ tokens :-
     $digit+\.$digit* { \s -> FloatLit (read s) }
     "true"  { \_ -> BoolLit True }
     "false" { \_ -> BoolLit False }
+    "end"   { \_ -> End }
     "let"   { \_ -> Let }
     "if"    { \_ -> If }
     "else"  { \_ -> Else }
@@ -31,7 +32,6 @@ tokens :-
     "array" { \_ -> Array }
     "break" { \_ -> Break }
     "do"    { \_ -> Do }
-    "end"   { \_ -> End }
     "in"    { \_ -> In }
     "of"    { \_ -> Of }
     "then"  { \_ -> Then }

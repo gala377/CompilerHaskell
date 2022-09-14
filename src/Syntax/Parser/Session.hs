@@ -138,7 +138,8 @@ matchExpect t msg = check t `expect` msg
 matchOrErr :: (PRes m, PState m) => Lexer.Token -> String -> m ()
 matchOrErr t msg = (check t $> ()) `catchError` \case
   NotThisFn -> do
-    addError $ SyntaxError msg
+    curr <- currToken
+    addError $ SyntaxError $ msg ++ " Current token: " ++ show curr
     return ()
   e -> throwError e
 

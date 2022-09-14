@@ -190,4 +190,7 @@ testCompareExpr (RecordLit s1 l1) (RecordLit s2 l2) =
   where
     testField ((n1, t1), (n2, t2)) =
       testCompareSymbols n1 n2 && testCompareExpr t1 t2
+testCompareExpr (Let d1 b1) (Let d2 b2) = 
+    testCompareExpr b1 b2 && length d1 == length d2
+      && all (uncurry testCompareDecls) (zip d1 d2) 
 testCompareExpr _ _ = False

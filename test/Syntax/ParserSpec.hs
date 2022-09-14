@@ -70,6 +70,10 @@ spec = do
       let expected = Absyn.TypeDecl (testSymbol "foo") $ Absyn.Array $ Absyn.TypeName $ testSymbol "int"
       let Absyn.Program [res] = parse "type foo = array of int"
       res `declShouldBe` expected
+    it "parser var decl with let" $ do
+      let expected = Absyn.VariableDecl (testSymbol "a") (Absyn.Variable Nothing $ Absyn.Let [ Absyn.FunctionDecl (testSymbol "a") $ Absyn.Function [] Nothing Absyn.Nil] (Absyn.FunctionCall (Absyn.Identifier $ testSymbol "a") []))
+      let Absyn.Program [res] = parse "var a = let function a() = nil in a() end"
+      res `declShouldBe` expected
   describe "parseExpr" $ do
     it "parses simple access" $ do
       let expected = Absyn.Access (Absyn.Identifier $ testSymbol "a") (testSymbol "b")
@@ -157,7 +161,24 @@ spec = do
               ]
       let res = parseExpr "a.b(1+2, 3)"
       res `exprShouldBe` expected
-
+    describe "let expr" $ do
+      it "works with multiple var decls" $ do
+        let expected = Absyn.Let [ Absyn.VariableDecl (testSymbol "a") $ Absyn.Variable Nothing Absyn.Nil
+                                 , Absyn.VariableDecl (testSymbol "b") $ Absyn.Variable Nothing Absyn.Nil
+                                 ]
+                                 (Absyn.ConstInt 1)
+        let res = parseExpr "let var a = nil var b = nil in 1 end"
+        res `exprShouldBe` expected
+      it "works with function decl" $ do
+        let expected = Absyn.Let [ Absyn.FunctionDecl (testSymbol "a") $ Absyn.Function [] Nothing Absyn.Nil]
+                                 (Absyn.ConstInt 1)
+        let res = parseExpr "let function a() = nil in 1 end"
+        res `exprShouldBe` expected
+      it "works with function decl 2" $ do
+        let expected = Absyn.Let [ Absyn.FunctionDecl (testSymbol "a") $ Absyn.Function [] Nothing Absyn.Nil]
+                                 (Absyn.FunctionCall (Absyn.Identifier $ testSymbol "a") [])
+        let res = parseExpr "let function a() = nil in a() end"
+        res `exprShouldBe` expected
   describe "testCompareExpr" $ do
     it "compares addition correctly" $ do
       let e1 = Absyn.Add (Absyn.ConstInt 1) (Absyn.ConstInt 2)

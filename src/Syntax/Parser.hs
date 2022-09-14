@@ -33,22 +33,23 @@ parse :: String -> [Lexer.Token] -> Either [SyntaxError] Absyn.Program
 parse s t = snd $ runParse s t
 
 parseProgram :: ParseRes Absyn.Program
-parseProgram = Absyn.Program <$> parseDeclarations []
+parseProgram = Absyn.Program <$> parseDeclarations Lexer.EOF []
 
-parseDeclarations :: [Absyn.Decl] -> ParseRes [Absyn.Decl]
-parseDeclarations decls = do
+parseDeclarations :: Lexer.Token -> [Absyn.Decl] -> ParseRes [Absyn.Decl]
+parseDeclarations endT decls = do
   curr <- currToken
-  if (curr == Lexer.EOF) || (curr == Lexer.In)
+  if curr == endT
     then return $ reverse decls
     else
       ( do
-          decl <- expect parseDecl "expected declaration"
-          parseDeclarations (decl : decls)
+          decl <- expect parseDecl ("expected declaration for end token " ++ show endT)
+          parseDeclarations endT (decl : decls)
       )
   where
     parseDecl :: ParseRes Absyn.Decl
     parseDecl = parseFunDecl `choice` parseVarDecl `choice` parseTypeDecl
 
+    parseTypeDecl :: ParseRes Absyn.Decl
     parseTypeDecl = do
       check Lexer.Type
       name <- parseIdentifier `expect` "expected type name"
@@ -103,7 +104,7 @@ parseDeclarations decls = do
           then Just <$> (parseType `expect` "expected variable type")
           else return Nothing
       Lexer.Assignment `matchExpect` "Expected an = sign after a variable name"
-      init <- parseExpr `expect` "expected init expression"
+      init <- parseExpr `expect` "expected init expression in var declaration "
       return $
         Absyn.VariableDecl id $
           Absyn.Variable
@@ -134,7 +135,7 @@ parseExpr = parseSequence
     parseSequence :: ParseRes Absyn.Expr
     parseSequence = do
       left <- parseAssignment
-      go left
+      go (trace ("parsed assignment in sequence " ++ show left) left)
       where
         go left = do
           s <- match Lexer.Semicolon
@@ -178,15 +179,16 @@ parseExpr = parseSequence
 
     parseLet :: ParseRes Absyn.Expr
     parseLet = do
-      decls <- parseDeclarations [] `expect` "expected declarations in let"
+      decls <- parseDeclarations Lexer.In [] `expect` "expected declarations in let"
       Lexer.In `matchOrErr` "expected 'in' keyword"
       body <- parseExpr `expect` "expected body for let"
-      Lexer.End `matchOrErr` "expected 'end' keyword"
+      trace ("Parsed let's body " ++ show body) $ return ()
+      Lexer.End `matchOrErr` "expected 'end' keyword, current token"
       return $ Absyn.Let decls body
 
     parseIf :: ParseRes Absyn.Expr
     parseIf = do
-      cond <- parseAddition `expect` "expected if condition"
+      cond <- parseEq `expect` "expected if condition"
       Lexer.Then `matchOrErr` "expected 'then' keyword after condition"
       body <- parseExpr `expect` "expected if's body"
       match Lexer.Else >>= \case
@@ -197,7 +199,7 @@ parseExpr = parseSequence
 
     parseWhile :: ParseRes Absyn.Expr
     parseWhile = do
-      cond <- parseAddition `expect` "expected while's condition"
+      cond <- parseEq `expect` "expected while's condition"
       Lexer.Then `matchOrErr` "expected 'then' keyword after condition"
       body <- parseExpr `expect` "expected while's body"
       return $ Absyn.While cond body
@@ -321,6 +323,7 @@ parseExpr = parseSequence
       return $ Absyn.Indexing left inner
     parseFnCall left = do
       arguments <- parseCallArguments [] `expect` "expected function call arguments"
+      Lexer.RParen `matchOrErr` "Unclosed function call parenthesis"
       return $ Absyn.FunctionCall left arguments
       where
         parseCallArguments :: [Absyn.Expr] -> ParseRes [Absyn.Expr]

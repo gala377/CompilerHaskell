@@ -79,6 +79,27 @@ typeEnv = fst
 varEnv :: Env -> VarEnv
 varEnv = snd
 
+mapVarEnv :: (VarEnv -> VarEnv) -> Env -> Env
+mapVarEnv = Bifunctor.second
+
+mapTypeEnv :: (TypeEnv -> TypeEnv) -> Env -> Env
+mapTypeEnv = Bifunctor.first
+
+constVarEnv :: VarEnv -> Env -> Env
+constVarEnv = mapVarEnv . const
+
+constTypeEnv :: TypeEnv -> Env -> Env
+constTypeEnv = mapTypeEnv . const
+
+withLocalEnv :: MonadReader r m => r -> m a -> m a
+withLocalEnv env = local (const env)
+
+withLocalTypeEnv :: MonadReader Env m => TypeEnv -> m a -> m a
+withLocalTypeEnv env = local (constTypeEnv env)
+
+withLocalVarEnv :: MonadReader Env m => VarEnv -> m a -> m a
+withLocalVarEnv env = local (constVarEnv env)
+
 {- End Env type -}
 
 {- HasDeclarations type class -}
@@ -128,8 +149,8 @@ typecheck prov int prog = runRWS (typecheck' prog) (Map.empty, Map.empty) (newSt
     typecheck' :: Absyn.Program -> TcM ()
     typecheck' prog = do
       tEnv <- prepareGlobalTypeEnv prog
-      vEnv <- local (const (tEnv, Map.empty)) $ prepareGlobalVarEnv prog
-      local (const (tEnv, vEnv)) $ typecheckBodies $ declarations prog
+      vEnv <- withLocalEnv (tEnv, Map.empty) $ prepareGlobalVarEnv prog
+      withLocalEnv (tEnv, vEnv) $ typecheckBodies $ declarations prog
 
 
     prepareGlobalTypeEnv :: (TcStateM m, TcWriterM m) => Absyn.Program -> m TypeEnv
@@ -158,7 +179,7 @@ typecheck prov int prog = runRWS (typecheck' prog) (Map.empty, Map.empty) (newSt
       fns' <- resolveDecls resolveFunDecl fns
       -- todo: check for duplicates
       let env = Map.fromList fns'
-      local (\(tenv, _) -> (tenv, env)) $ do
+      withLocalVarEnv env $ do
         vars' <- resolveVarDecls vars
         let env = Map.fromList (vars' ++ fns')
         return env
@@ -366,7 +387,7 @@ typecheckBodies (Absyn.FunctionDecl name (Absyn.Function args _ body) : ds) = do
   let Function pars ret = venv ! name
   let args' = zip (fmap (\(Absyn.TypedName name _) -> name) args) pars
   let venv' = foldl (\env (n, t) -> Map.insert n (Var t) env) venv args'
-  local (\(tenv, _) -> (tenv, venv')) $ do
+  withLocalVarEnv venv' $ do
     bodyT <- typecheckExp body
     checkTypesEq ret bodyT "Return type of a function and its body do not match"
   typecheckBodies ds
@@ -475,13 +496,13 @@ typecheckExp letExpr@(Absyn.Let decl body) = do
   let vars = extractVarDecl letExpr
   (tenv, venv) <- ask
   tenv' <- prepareTypeEnv tenv types
-  local (\(_, ve) -> (tenv', ve)) $ do
+  withLocalTypeEnv tenv' $ do
     functions' <- resolveDecls resolveFunDecl functions
     let venv' = List.foldl' (\e (n, f) -> Map.insert n f e) venv functions'
-    local (\(te, _) -> (te, venv')) $ typecheckBodies decl
+    withLocalVarEnv venv' $ typecheckBodies decl
     vars' <- resolveDecls resolveNoRecVars vars
     let venv'' = List.foldl' (\e (n, v) -> Map.insert n v e) venv' vars'
-    local (const (tenv', venv'')) $ typecheckExp body
+    withLocalEnv (tenv', venv'') $ typecheckExp body
   where
     resolveNoRecVars (Absyn.Variable (Just t) body) = do
       t <- resolveType t
