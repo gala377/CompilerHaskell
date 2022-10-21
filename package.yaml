@@ -26,17 +26,14 @@ dependencies:
 - text
 - containers
 
-# language field doesn't work so we manually setup
-# ghc2021 extensions
 default-extensions:
 - RecordWildCards
 - DuplicateRecordFields
 - LambdaCase
-default-language: GHC2021
+language: GHC2021
 
 library:
   source-dirs: src
-
 
 executables:
   compiler-exe:
